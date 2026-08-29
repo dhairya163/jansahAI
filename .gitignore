@@ -1,0 +1,15 @@
+node_modules/
+.env
+.env.local
+.env*.local
+*.log
+.DS_Store
+*.tsbuildinfo
+.vercel/
+
+# local editor / AI-tooling files (auto-generated, machine-specific)
+.cursor/
+.windsurf/
+.aider*
+CLAUDE.md
+GEMINI.md
