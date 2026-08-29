@@ -32,7 +32,6 @@ export default function VideoPage() {
             <MicIcon /> Try it live
           </Link>
           <Link className="btn" href="/track?demo=1">Explore a seeded case</Link>
-          <a className="dl" href="/jansah-demo.mp4" download>Download the video</a>
         </div>
 
         <p className="faint" style={{ fontSize: 12, marginTop: 'var(--sp-6)' }}>
