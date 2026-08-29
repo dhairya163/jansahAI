@@ -98,7 +98,7 @@ export function Nav({ right }: { right?: React.ReactNode }) {
         {right ?? (
           <div className="navlinks">
             <Link href="/about">How it works</Link>
-            <Link href="/about">Honesty</Link>
+            <Link href="/video">Video</Link>
             <Link href="/track">Track case</Link>
           </div>
         )}
