@@ -13,7 +13,26 @@ import { categoryLabel, statusLabel } from './engine/labels.js';
 import { virtualDay } from './engine/clocks.js';
 
 const app = express();
-app.use(cors({ origin: [config.appBaseUrl, 'http://localhost:3000', 'http://127.0.0.1:3000'], credentials: false }));
+
+// CORS: APP_BASE_URL may be a comma-separated origin list; trailing slashes are
+// forgiven; localhost always works; in demo mode, Vercel preview URLs are allowed
+// too so every deploy Just Works (CORS is not the security boundary here — OTP/JWT/
+// basic-auth gates are).
+const allowedOrigins = new Set(
+  [config.appBaseUrl, 'http://localhost:3000', 'http://127.0.0.1:3000']
+    .flatMap((s) => s.split(','))
+    .map((s) => s.trim().replace(/\/+$/, ''))
+    .filter(Boolean),
+);
+app.use(cors({
+  credentials: false,
+  origin: (origin, cb) => {
+    if (!origin) { cb(null, true); return; }               // curl / same-origin / health checks
+    const o = origin.replace(/\/+$/, '');
+    const ok = allowedOrigins.has(o) || (config.demoMode && /^https:\/\/[a-z0-9.-]+\.vercel\.app$/i.test(o));
+    cb(null, ok);
+  },
+}));
 app.use(express.json({ limit: '1mb' }));
 
 app.get('/health', (_req, res) => res.json({ ok: true, name: config.appName, demo: config.demoMode }));
