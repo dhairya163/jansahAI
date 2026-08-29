@@ -29,8 +29,10 @@ export async function sendCaseEmail(record: CaseRecord, template: string) {
   if (config.resendApiKey) {
     try {
       const resend = new Resend(config.resendApiKey);
-      await resend.emails.send({ from: config.mailFrom, to: record.email, bcc: config.opsEmail, replyTo: config.mailReplyTo, subject, html });
+      const response = await resend.emails.send({ from: config.mailFrom, to: record.email, bcc: config.opsEmail, replyTo: config.mailReplyTo, subject, html });
+      if (response.error) throw new Error(response.error.message);
       email.status = 'sent'; email.sentAt = new Date().toISOString();
+      email.payload = { provider: 'resend', email_id: response.data.id };
     } catch (error) {
       email.status = 'failed'; email.payload = { error: error instanceof Error ? error.message : 'Unknown email error' };
     }

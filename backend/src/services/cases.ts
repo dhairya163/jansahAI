@@ -8,6 +8,7 @@ import { makeEvent, repository } from '../db/repository.js';
 import type { ArtifactKind, ArtifactRecord, CaseBundle, CaseRecord, CaseStatus, ClockRecord, Handler, SuspectRecord } from '../domain/types.js';
 import { getGuidance } from '../engine/guidance.js';
 import { categoryLabels, playbooks } from '../engine/playbooks.js';
+import { normalizeIncidentTimestamp } from '../lib/dateTime.js';
 import { caseNumber, id } from '../lib/ids.js';
 import { aadhaarLast4, maskPhone, normalizeSuspect, redactSensitive } from '../lib/redact.js';
 import { artifactLabels } from './artifacts.js';
@@ -24,7 +25,13 @@ export const registrationSchema = z.object({
   email: z.email().optional().or(z.literal('')),
   aadhaar: z.string().max(24).optional(),
   amount: z.coerce.number().nonnegative().optional(),
-  incidentAt: z.string().optional(),
+  incidentAt: z.string().optional().transform((value, context) => {
+    if (!value) return undefined;
+    const normalized = normalizeIncidentTimestamp(value);
+    if (normalized) return normalized;
+    context.addIssue({ code: 'custom', message: 'Incident time could not be understood' });
+    return z.NEVER;
+  }),
   narrative: z.string().trim().min(20).max(8000),
   slots: z.record(z.string(), z.unknown()).default({}),
   demoPersona: z.string().optional(),
@@ -111,8 +118,8 @@ export async function registerCase(raw: unknown) {
     try { await runHandler(record, handler); }
     catch (error) { await repository.addEvent(makeEvent(record.id, 'note', 'system', { label: 'A follow-up action will retry', handler: handler.do, error: error instanceof Error ? error.message : 'Unknown error' }, virtualNow(record).toISOString())); }
   }
-  await sendCaseEmail(record, 'ack');
-  return { bundle: await getCaseBundle(record), accessToken: signCaseToken(record.id) };
+  const emailDelivery = await sendCaseEmail(record, 'ack');
+  return { bundle: await getCaseBundle(record), accessToken: signCaseToken(record.id), emailDelivery };
 }
 
 const conditionHolds = async (record: CaseRecord, condition: ClockRecord['condition']) => {

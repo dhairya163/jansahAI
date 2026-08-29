@@ -10,6 +10,7 @@ import {
   applyPendingAnswerFallback,
   confirmationReply,
   correctionReply,
+  detectRegistrationConfirmation,
   extractIntakeTurn,
   fallbackExtraction,
   nextRequiredField,
@@ -185,8 +186,12 @@ app.post('/api/realtime/session/orchestrate', async (req, res, next) => {
       console.error('Voice orchestrator fallback:', error);
       extraction = fallbackExtraction(transcript, draft.language);
     }
+    if (wasAwaitingConfirmation) {
+      const confirmation = detectRegistrationConfirmation(transcript);
+      if (confirmation !== 'unknown') extraction.confirmation = confirmation;
+    }
     applyPendingAnswerFallback(extraction, draft.pendingField, transcript);
-    const saved = applyIntakeExtraction(draft, extraction);
+    const saved = applyIntakeExtraction(draft, extraction, draft.startedAt, transcript);
 
     let reply: string;
     let accessToken: string | undefined;
@@ -214,7 +219,7 @@ app.post('/api/realtime/session/orchestrate', async (req, res, next) => {
       draft.awaitingConfirmation = false;
       draft.pendingField = undefined;
       accessToken = result.accessToken;
-      reply = registeredReply(draft.language, draft.caseNumber);
+      reply = registeredReply(draft.language, draft.caseNumber, result.emailDelivery.status === 'sent' ? draft.contact.email : undefined);
     } else if (wasAwaitingConfirmation && extraction.confirmation === 'no') {
       draft.awaitingConfirmation = false;
       draft.pendingField = 'correction';

@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { config } from '../config.js';
 import type { VoiceLanguage } from '../domain/types.js';
 import { categoryLabels, playbooks } from '../engine/playbooks.js';
+import { normalizeIncidentTimestamp } from '../lib/dateTime.js';
 import { redactSensitive } from '../lib/redact.js';
 
 const categories = Object.keys(playbooks) as [string, ...string[]];
@@ -67,11 +68,39 @@ export interface OrchestratorDraft {
 
 type SpokenLanguage = Exclude<VoiceLanguage, 'und'>;
 
+export function normalizeSpokenEmail(value: string) {
+  const normalized = value.trim().toLowerCase()
+    .replace(/\s+(?:at\s+the\s+rate|at|एट)\s+/gi, '@')
+    .replace(/\s+(?:dot|डॉट)\s+/gi, '.')
+    .replace(/\s+(?:underscore|अंडरस्कोर)\s+/gi, '_')
+    .replace(/\s+/g, '');
+  return /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(normalized) ? normalized : undefined;
+}
+
+export function detectRegistrationConfirmation(transcript: string): 'yes' | 'no' | 'unknown' {
+  const text = transcript.trim().toLowerCase().replace(/[.,!?।]/g, ' ').replace(/\s+/g, ' ');
+  if (!text) return 'unknown';
+  if (/\b(no|nope|nah|wait|stop|cancel|change|correct|wrong|don'?t|do not|not yet|nahi|nahin|mat)\b/i.test(text)
+    || /(नहीं|नही|मत करो|रुको|रुकिए|बदल|सुधार|गलत)/.test(text)) return 'no';
+  if (/\b(yes|yeah|yep|confirm|confirmed|submit|register|proceed|go ahead|please do|kar do|kar dijiye|darj kar|file kar)\b/i.test(text)
+    || /(हाँ|हां|जी हाँ|जी हां|कर दो|कर दीजिए|दर्ज कर|जमा कर|ठीक है)/.test(text)) return 'yes';
+  return 'unknown';
+}
+
+function looksLikeName(value: string) {
+  const words = value.trim().split(/\s+/).filter(Boolean);
+  return words.length >= 1 && words.length <= 5 && value.length <= 80 && !/[?@\d]/.test(value)
+    && !/(पैसे|चुर|यूपीआई|शिकायत|अकाउंट|रिपोर्ट|(?:^|\s)(?:upi|transaction|fraud|scam|complaint|account|report)(?:\s|$))/i.test(value);
+}
+
 export function detectTurnLanguage(transcript: string, current: VoiceLanguage) {
   const devanagariCount = (transcript.match(/[\u0900-\u097f]/g) ?? []).length;
   if (devanagariCount >= 2) return { language: 'hi' as const, confident: true };
 
   const words = transcript.toLowerCase().match(/[a-z]+/g) ?? [];
+  if (/@/.test(transcript) || (/\bdot\b/i.test(transcript) && /\bat\b/i.test(transcript))) {
+    return { language: current === 'und' ? 'en' as const : current as SpokenLanguage, confident: false };
+  }
   const hinglishWords = new Set(['aap', 'abhi', 'batao', 'bataiye', 'gaya', 'gayi', 'hai', 'hain', 'hua', 'kya', 'maine', 'mera', 'meri', 'mujhe', 'nahi', 'paise', 'tha', 'thi', 'the', 'ya']);
   if (words.filter((word) => hinglishWords.has(word)).length >= 2) return { language: 'hi-en' as const, confident: true };
 
@@ -120,6 +149,8 @@ State rules:
 - Use current_draft to understand what the latest answer refers to.
 - Return null or [] for facts not updated in this turn.
 - narrative is a concise complete account. Update it only when substantive incident facts are added or corrected.
+- incident_at must be a valid ISO-8601 timestamp. Resolve Hindi/Hinglish expressions such as "kal raat 10 baje" relative to reference_time in the Asia/Kolkata timezone.
+- email must be a normalized deliverable address. Convert spoken forms such as "name dot surname at gmail dot com" into name.surname@gmail.com.
 - txns contains transaction/reference IDs exactly as spoken.
 - suspect_contacts contains suspect phone numbers, emails, handles, or payment IDs.
 - confirmation is yes/no only when directly answering the final registration-confirmation question; otherwise unknown.
@@ -162,6 +193,7 @@ export async function extractIntakeTurn(transcript: string, draft: OrchestratorD
           on_behalf_of: draft.onBehalfOf ?? null, slots: draft.slots, contact: draft.contact,
           awaiting_confirmation: Boolean(draft.awaitingConfirmation),
           pending_field: draft.pendingField ?? null,
+          reference_time: new Date().toISOString(),
         },
         latest_utterance: redactSensitive(transcript),
       }),
@@ -211,7 +243,7 @@ function inferredInstrument(category?: string) {
   return ({ financial_upi: 'UPI', financial_card: 'card', financial_netbanking: 'net banking', financial_wallet: 'wallet', crypto_scam: 'cryptocurrency' } as Record<string, string>)[category ?? ''];
 }
 
-export function applyIntakeExtraction(draft: OrchestratorDraft, extraction: IntakeExtraction) {
+export function applyIntakeExtraction(draft: OrchestratorDraft, extraction: IntakeExtraction, referenceTime: string | Date = new Date(), sourceTranscript?: string) {
   const saved: string[] = [];
   draft.language = resolveTurnLanguage(draft.language, extraction);
   if (extraction.category && extraction.category !== draft.category) { draft.category = extraction.category; saved.push('category'); }
@@ -220,7 +252,17 @@ export function applyIntakeExtraction(draft: OrchestratorDraft, extraction: Inta
 
   const contacts = { reporter_name: extraction.reporter_name, victim_name: extraction.victim_name, phone: extraction.phone, email: extraction.email };
   for (const [key, value] of Object.entries(contacts)) {
-    if (value?.trim()) { draft.contact[key] = String(redactSensitive(value.trim())); saved.push(key); }
+    if (!value?.trim()) continue;
+    if ((key === 'reporter_name' || key === 'victim_name') && !looksLikeName(value)) continue;
+    if (key === 'email') {
+      const email = normalizeSpokenEmail(value);
+      if (!email) continue;
+      draft.contact.email = email;
+      saved.push('email');
+      continue;
+    }
+    draft.contact[key] = String(redactSensitive(value.trim()));
+    saved.push(key);
   }
   for (const [key, raw] of Object.entries(extraction.slots)) {
     if (arrays.has(key)) {
@@ -228,6 +270,11 @@ export function applyIntakeExtraction(draft: OrchestratorDraft, extraction: Inta
       if (!values.length) continue;
       draft.slots[key] = key === 'txns' ? values.map((ref) => ({ ref })) : key === 'suspect_contacts' ? values.map((value) => ({ value })) : values;
       saved.push(key);
+    } else if (key === 'incident_at' && typeof raw === 'string') {
+      const timestamp = normalizeIncidentTimestamp(sourceTranscript, referenceTime) ?? normalizeIncidentTimestamp(raw, referenceTime);
+      if (!timestamp) continue;
+      draft.slots.incident_at = timestamp;
+      saved.push('incident_at');
     } else if (raw !== null && raw !== '') {
       draft.slots[key] = typeof raw === 'string' ? redactSensitive(raw.trim()) : raw;
       saved.push(key);
@@ -245,8 +292,13 @@ export function applyPendingAnswerFallback(extraction: IntakeExtraction, pending
   const value = transcript.trim();
   if (!value) return false;
 
-  if (pendingField === 'reporter_name' && !extraction.reporter_name) { extraction.reporter_name = value; return true; }
-  if (pendingField === 'victim_name' && !extraction.victim_name) { extraction.victim_name = value; return true; }
+  if (pendingField === 'reporter_name' && !extraction.reporter_name && looksLikeName(value)) { extraction.reporter_name = value; return true; }
+  if (pendingField === 'victim_name' && !extraction.victim_name && looksLikeName(value)) { extraction.victim_name = value; return true; }
+  if (pendingField === 'email' && !extraction.email) {
+    const email = normalizeSpokenEmail(value);
+    if (email) { extraction.email = email; return true; }
+    return false;
+  }
   if (pendingField === 'amount' || pendingField === 'total_invested') {
     const numeric = Number(value.replace(/[^\d.]/g, ''));
     if (Number.isFinite(numeric) && numeric >= 0 && extraction.slots[pendingField] === null) {
@@ -274,6 +326,7 @@ function complete(draft: OrchestratorDraft, field: string) {
   const value = draft.slots[field];
   if (field === 'suspect_contacts' && !value) return Boolean(draft.slots.payee_identifier);
   if (field === 'narrative') return typeof value === 'string' && value.trim().length >= 20;
+  if (field === 'incident_at') return typeof value === 'string' && Number.isFinite(Date.parse(value));
   if (typeof value === 'boolean') return true;
   if (typeof value === 'number') return Number.isFinite(value);
   if (typeof value === 'string') return Boolean(value.trim());
@@ -288,18 +341,19 @@ export function nextRequiredField(draft: OrchestratorDraft): string | null {
   for (const field of playbook.slots) if (!complete(draft, field)) return field;
   if (draft.onBehalfOf && !draft.contact.victim_name) return 'victim_name';
   if (!draft.anonymous && !draft.contact.reporter_name) return 'reporter_name';
+  if (!normalizeSpokenEmail(draft.contact.email ?? '')) return 'email';
   return null;
 }
 
 const questions: Record<SpokenLanguage, Record<string, string>> = {
   en: {
-    category: 'Which kind of incident was this: payment fraud, account hacking, harassment, impersonation, or something else?', anonymous_choice: 'Would you like to report this anonymously?', narrative: 'Please describe what happened from the beginning.', amount: 'How much money was lost?', incident_at: 'When did the transaction or incident happen?', instrument: 'Which payment method was used?', txns: 'Please tell me all the transaction or reference IDs.', payee_identifier: 'What identifier was used for the recipient, such as a UPI ID, phone number, or account reference?', own_bank: 'Which bank or payment provider did you use?', suspect_contacts: 'What contact or payment identifier did the suspect use?', platforms: 'Which platform or account was affected?', urls: 'What website or profile link was involved?', first_seen_at: 'When did you first notice it?', suspect_handles: 'What username or handle did the suspect use?', account_id: 'What username, phone number, or email identified the affected account?', when_lost: 'When did you lose access to the account?', recovery_tried: 'What recovery steps have you already tried?', system_affected: 'Which device, system, or data was affected?', ransom_note: 'What did the ransom message demand?', when: 'When did this happen?', numbers: 'Which phone numbers were involved?', message_samples: 'What did the suspicious message say?', caller_claims: 'Who did the caller claim to be?', platform_name: 'Which platform or service was used?', total_invested: 'How much money did you invest in total?', app_name: 'What was the name of the suspicious app?', wallet_addresses: 'Which crypto wallet addresses were involved?', exchange: 'Which crypto exchange or service was involved?', reporter_name: 'What fictional name should I record for the reporter?', victim_name: 'What fictional name should I record for the person you are reporting for?', correction: 'What would you like me to correct?',
+    category: 'Which kind of incident was this: payment fraud, account hacking, harassment, impersonation, or something else?', anonymous_choice: 'Would you like to report this anonymously?', narrative: 'Please describe what happened from the beginning.', amount: 'How much money was lost?', incident_at: 'When did the transaction or incident happen?', instrument: 'Which payment method was used?', txns: 'Please tell me all the transaction or reference IDs.', payee_identifier: 'What identifier was used for the recipient, such as a UPI ID, phone number, or account reference?', own_bank: 'Which bank or payment provider did you use?', suspect_contacts: 'What contact or payment identifier did the suspect use?', platforms: 'Which platform or account was affected?', urls: 'What website or profile link was involved?', first_seen_at: 'When did you first notice it?', suspect_handles: 'What username or handle did the suspect use?', account_id: 'What username, phone number, or email identified the affected account?', when_lost: 'When did you lose access to the account?', recovery_tried: 'What recovery steps have you already tried?', system_affected: 'Which device, system, or data was affected?', ransom_note: 'What did the ransom message demand?', when: 'When did this happen?', numbers: 'Which phone numbers were involved?', message_samples: 'What did the suspicious message say?', caller_claims: 'Who did the caller claim to be?', platform_name: 'Which platform or service was used?', total_invested: 'How much money did you invest in total?', app_name: 'What was the name of the suspicious app?', wallet_addresses: 'Which crypto wallet addresses were involved?', exchange: 'Which crypto exchange or service was involved?', reporter_name: 'What fictional name should I record for the reporter?', victim_name: 'What fictional name should I record for the person you are reporting for?', email: 'Which email address should I use to send your case report and updates?', correction: 'What would you like me to correct?',
   },
   hi: {
-    category: 'यह किस तरह की घटना थी: पैसे की धोखाधड़ी, अकाउंट हैक, उत्पीड़न, पहचान की नकल, या कुछ और?', anonymous_choice: 'क्या आप यह शिकायत गुमनाम रूप से दर्ज करना चाहते हैं?', narrative: 'कृपया शुरू से बताइए कि क्या हुआ था।', amount: 'कितनी रकम का नुकसान हुआ?', incident_at: 'लेन-देन या घटना कब हुई थी?', instrument: 'भुगतान का कौन सा तरीका इस्तेमाल हुआ था?', txns: 'कृपया सभी ट्रांज़ैक्शन या रेफरेंस आईडी बताइए।', payee_identifier: 'पैसे पाने वाले की यूपीआई आईडी, फोन नंबर, या अकाउंट रेफरेंस क्या था?', own_bank: 'आपने कौन सा बैंक या पेमेंट सेवा इस्तेमाल की थी?', suspect_contacts: 'संदिग्ध ने कौन सा संपर्क या पेमेंट पहचान इस्तेमाल की?', platforms: 'कौन सा प्लेटफॉर्म या अकाउंट प्रभावित हुआ?', urls: 'कौन सा वेबसाइट या प्रोफाइल लिंक शामिल था?', first_seen_at: 'आपने इसे पहली बार कब देखा?', suspect_handles: 'संदिग्ध ने कौन सा यूज़रनेम या हैंडल इस्तेमाल किया?', account_id: 'प्रभावित अकाउंट का यूज़रनेम, फोन नंबर, या ईमेल क्या था?', when_lost: 'अकाउंट का एक्सेस कब गया?', recovery_tried: 'आपने अकाउंट वापस पाने के लिए अब तक क्या कोशिश की?', system_affected: 'कौन सा डिवाइस, सिस्टम, या डेटा प्रभावित हुआ?', ransom_note: 'फिरौती वाले संदेश में क्या माँगा गया था?', when: 'यह घटना कब हुई?', numbers: 'कौन से फोन नंबर शामिल थे?', message_samples: 'संदिग्ध संदेश में क्या लिखा था?', caller_claims: 'कॉलर ने खुद को कौन बताया था?', platform_name: 'कौन सा प्लेटफॉर्म या सेवा इस्तेमाल हुई?', total_invested: 'आपने कुल कितनी रकम निवेश की थी?', app_name: 'संदिग्ध ऐप का नाम क्या था?', wallet_addresses: 'कौन से क्रिप्टो वॉलेट पते शामिल थे?', exchange: 'कौन सा क्रिप्टो एक्सचेंज या सेवा शामिल थी?', reporter_name: 'रिपोर्टर के लिए कौन सा काल्पनिक नाम दर्ज करूँ?', victim_name: 'जिस व्यक्ति के लिए आप रिपोर्ट कर रहे हैं, उसका कौन सा काल्पनिक नाम दर्ज करूँ?', correction: 'आप कौन सी जानकारी ठीक करवाना चाहते हैं?',
+    category: 'यह किस तरह की घटना थी: पैसे की धोखाधड़ी, अकाउंट हैक, उत्पीड़न, पहचान की नकल, या कुछ और?', anonymous_choice: 'क्या आप यह शिकायत गुमनाम रूप से दर्ज करना चाहते हैं?', narrative: 'कृपया शुरू से बताइए कि क्या हुआ था।', amount: 'कितनी रकम का नुकसान हुआ?', incident_at: 'लेन-देन या घटना कब हुई थी?', instrument: 'भुगतान का कौन सा तरीका इस्तेमाल हुआ था?', txns: 'कृपया सभी ट्रांज़ैक्शन या रेफरेंस आईडी बताइए।', payee_identifier: 'पैसे पाने वाले की यूपीआई आईडी, फोन नंबर, या अकाउंट रेफरेंस क्या था?', own_bank: 'आपने कौन सा बैंक या पेमेंट सेवा इस्तेमाल की थी?', suspect_contacts: 'संदिग्ध ने कौन सा संपर्क या पेमेंट पहचान इस्तेमाल की?', platforms: 'कौन सा प्लेटफॉर्म या अकाउंट प्रभावित हुआ?', urls: 'कौन सा वेबसाइट या प्रोफाइल लिंक शामिल था?', first_seen_at: 'आपने इसे पहली बार कब देखा?', suspect_handles: 'संदिग्ध ने कौन सा यूज़रनेम या हैंडल इस्तेमाल किया?', account_id: 'प्रभावित अकाउंट का यूज़रनेम, फोन नंबर, या ईमेल क्या था?', when_lost: 'अकाउंट का एक्सेस कब गया?', recovery_tried: 'आपने अकाउंट वापस पाने के लिए अब तक क्या कोशिश की?', system_affected: 'कौन सा डिवाइस, सिस्टम, या डेटा प्रभावित हुआ?', ransom_note: 'फिरौती वाले संदेश में क्या माँगा गया था?', when: 'यह घटना कब हुई?', numbers: 'कौन से फोन नंबर शामिल थे?', message_samples: 'संदिग्ध संदेश में क्या लिखा था?', caller_claims: 'कॉलर ने खुद को कौन बताया था?', platform_name: 'कौन सा प्लेटफॉर्म या सेवा इस्तेमाल हुई?', total_invested: 'आपने कुल कितनी रकम निवेश की थी?', app_name: 'संदिग्ध ऐप का नाम क्या था?', wallet_addresses: 'कौन से क्रिप्टो वॉलेट पते शामिल थे?', exchange: 'कौन सा क्रिप्टो एक्सचेंज या सेवा शामिल थी?', reporter_name: 'रिपोर्टर के लिए कौन सा काल्पनिक नाम दर्ज करूँ?', victim_name: 'जिस व्यक्ति के लिए आप रिपोर्ट कर रहे हैं, उसका कौन सा काल्पनिक नाम दर्ज करूँ?', email: 'केस रिपोर्ट और अपडेट भेजने के लिए कौन सा ईमेल पता इस्तेमाल करूँ?', correction: 'आप कौन सी जानकारी ठीक करवाना चाहते हैं?',
   },
   'hi-en': {
-    category: 'Yeh kis type ka incident tha: payment fraud, account hack, harassment, impersonation, ya kuch aur?', anonymous_choice: 'Kya aap yeh complaint anonymously register karna chahte hain?', narrative: 'Please shuru se bataiye ki kya hua tha.', amount: 'Kitne paise ka loss hua?', incident_at: 'Transaction ya incident kab hua tha?', instrument: 'Kaunsa payment method use hua tha?', txns: 'Please saare transaction ya reference IDs bataiye.', payee_identifier: 'Recipient ki UPI ID, phone number, ya account reference kya tha?', own_bank: 'Aapne kaunsa bank ya payment provider use kiya tha?', suspect_contacts: 'Suspect ne kaunsa contact ya payment identifier use kiya?', platforms: 'Kaunsa platform ya account affect hua?', urls: 'Kaunsa website ya profile link involved tha?', first_seen_at: 'Aapne ise pehli baar kab notice kiya?', suspect_handles: 'Suspect ka username ya handle kya tha?', account_id: 'Affected account ka username, phone number, ya email kya tha?', when_lost: 'Account ka access kab gaya?', recovery_tried: 'Account recover karne ke liye aapne ab tak kya try kiya?', system_affected: 'Kaunsa device, system, ya data affect hua?', ransom_note: 'Ransom message mein kya demand ki gayi thi?', when: 'Yeh kab hua tha?', numbers: 'Kaunse phone numbers involved the?', message_samples: 'Suspicious message mein kya likha tha?', caller_claims: 'Caller ne khud ko kaun bataya tha?', platform_name: 'Kaunsa platform ya service use hua tha?', total_invested: 'Aapne total kitne paise invest kiye the?', app_name: 'Suspicious app ka naam kya tha?', wallet_addresses: 'Kaunse crypto wallet addresses involved the?', exchange: 'Kaunsa crypto exchange ya service involved thi?', reporter_name: 'Reporter ke liye kaunsa fictional naam save karoon?', victim_name: 'Jiske liye aap report kar rahe hain, unka kaunsa fictional naam save karoon?', correction: 'Aap kaunsi detail correct karwana chahte hain?',
+    category: 'Yeh kis type ka incident tha: payment fraud, account hack, harassment, impersonation, ya kuch aur?', anonymous_choice: 'Kya aap yeh complaint anonymously register karna chahte hain?', narrative: 'Please shuru se bataiye ki kya hua tha.', amount: 'Kitne paise ka loss hua?', incident_at: 'Transaction ya incident kab hua tha?', instrument: 'Kaunsa payment method use hua tha?', txns: 'Please saare transaction ya reference IDs bataiye.', payee_identifier: 'Recipient ki UPI ID, phone number, ya account reference kya tha?', own_bank: 'Aapne kaunsa bank ya payment provider use kiya tha?', suspect_contacts: 'Suspect ne kaunsa contact ya payment identifier use kiya?', platforms: 'Kaunsa platform ya account affect hua?', urls: 'Kaunsa website ya profile link involved tha?', first_seen_at: 'Aapne ise pehli baar kab notice kiya?', suspect_handles: 'Suspect ka username ya handle kya tha?', account_id: 'Affected account ka username, phone number, ya email kya tha?', when_lost: 'Account ka access kab gaya?', recovery_tried: 'Account recover karne ke liye aapne ab tak kya try kiya?', system_affected: 'Kaunsa device, system, ya data affect hua?', ransom_note: 'Ransom message mein kya demand ki gayi thi?', when: 'Yeh kab hua tha?', numbers: 'Kaunse phone numbers involved the?', message_samples: 'Suspicious message mein kya likha tha?', caller_claims: 'Caller ne khud ko kaun bataya tha?', platform_name: 'Kaunsa platform ya service use hua tha?', total_invested: 'Aapne total kitne paise invest kiye the?', app_name: 'Suspicious app ka naam kya tha?', wallet_addresses: 'Kaunse crypto wallet addresses involved the?', exchange: 'Kaunsa crypto exchange ya service involved thi?', reporter_name: 'Reporter ke liye kaunsa fictional naam save karoon?', victim_name: 'Jiske liye aap report kar rahe hain, unka kaunsa fictional naam save karoon?', email: 'Case report aur updates bhejne ke liye kaunsa email address use karoon?', correction: 'Aap kaunsi detail correct karwana chahte hain?',
   },
 };
 
@@ -318,6 +372,7 @@ export function confirmationReply(draft: OrchestratorDraft) {
   if (draft.category) parts.push(categoryLabels[draft.category] ?? draft.category);
   if (draft.slots.amount) parts.push(`amount ${draft.slots.amount}`);
   if (draft.contact.reporter_name) parts.push(`reporter ${draft.contact.reporter_name}`);
+  if (draft.contact.email) parts.push(`report email ${draft.contact.email}`);
   const summary = parts.length ? `: ${parts.join(', ')}` : '';
   if (draft.language === 'hi') return `मेरे पास सभी ज़रूरी जानकारी है${summary}। क्या मैं अब शिकायत दर्ज कर दूँ?`;
   if (draft.language === 'hi-en') return `Mere paas saari required details hain${summary}. Kya main ab complaint register kar doon?`;
@@ -326,9 +381,9 @@ export function confirmationReply(draft: OrchestratorDraft) {
 
 export const correctionReply = (language: VoiceLanguage) => questionReply(language, 'correction');
 
-export function registeredReply(language: VoiceLanguage, caseNumber: string) {
+export function registeredReply(language: VoiceLanguage, caseNumber: string, deliveredEmail?: string) {
   const spoken = caseNumber.split('').join(' ');
-  if (language === 'hi') return `शिकायत दर्ज हो गई है। आपका केस नंबर ${spoken} है। इसे सुरक्षित रखिए।`;
-  if (language === 'hi-en') return `Complaint register ho gayi hai. Aapka case number ${spoken} hai. Ise safely save kar lijiye.`;
-  return `The complaint is registered. Your case number is ${spoken}. Please save it safely.`;
+  if (language === 'hi') return `शिकायत दर्ज हो गई है। आपका केस नंबर ${spoken} है। इसे सुरक्षित रखिए।${deliveredEmail ? ` रिपोर्ट का लिंक ${deliveredEmail} पर भेज दिया गया है।` : ''}`;
+  if (language === 'hi-en') return `Complaint register ho gayi hai. Aapka case number ${spoken} hai. Ise safely save kar lijiye.${deliveredEmail ? ` Report ka link ${deliveredEmail} par bhej diya gaya hai.` : ''}`;
+  return `The complaint is registered. Your case number is ${spoken}. Please save it safely.${deliveredEmail ? ` The report link was sent to ${deliveredEmail}.` : ''}`;
 }
