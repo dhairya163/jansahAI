@@ -1,0 +1,67 @@
+# One-click backend deploy on Render (https://render.com → New → Blueprint → point at this repo).
+# After the service is up, copy its URL into the frontend's NEXT_PUBLIC_API_BASE on Vercel,
+# and set this service's APP_BASE_URL to the Vercel URL (CORS + email links).
+services:
+  - type: web
+    name: jansah-backend
+    runtime: node
+    rootDir: backend
+    plan: starter          # free tier sleeps on idle → cold starts kill a voice demo; starter stays warm
+    buildCommand: npm install
+    startCommand: npm run start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_VERSION
+        value: 20.20.0
+      - key: APP_BASE_URL
+        sync: false        # set to your Vercel URL, e.g. https://jansah.vercel.app
+      - key: API_BASE_URL
+        sync: false        # set to this service's own URL
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: REALTIME_MODEL
+        value: gpt-realtime
+      - key: TEXT_MODEL
+        value: gpt-4.1-mini
+      - key: TRANSCRIBE_MODEL
+        value: gpt-4o-transcribe
+      - key: REALTIME_VOICE
+        value: marin
+      - key: VAD_THRESHOLD
+        value: "0.3"
+      - key: VAD_PREFIX_MS
+        value: "400"
+      - key: VAD_SILENCE_MS
+        value: "600"
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SECRET_KEY
+        sync: false
+      - key: SUPABASE_PUBLISHABLE_KEY
+        sync: false
+      - key: DATABASE_URL
+        sync: false
+      - key: ARTIFACTS_BUCKET
+        value: artifacts
+      - key: RESEND_API_KEY
+        sync: false
+      - key: MAIL_FROM
+        sync: false
+      - key: MAIL_REPLY_TO
+        sync: false
+      - key: OPS_BASIC_AUTH
+        sync: false
+      - key: CRON_SECRET
+        generateValue: true
+      - key: JWT_SECRET
+        generateValue: true
+      - key: OTP_FIXED_CODE
+        value: "424242"
+      - key: DEMO_MODE
+        value: "true"
+      - key: MAX_SESSION_MINUTES
+        value: "10"
+      - key: MAX_SESSIONS_PER_DAY
+        value: "50"
+      - key: PURGE_DAYS
+        value: "7"
