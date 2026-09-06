@@ -7,6 +7,7 @@ import { realtimeCallWsUrl, hangupSipCall } from './realtime.js';
 import { handleTool, ToolError } from './toolHandlers.js';
 import { broadcast } from '../lib/supabase.js';
 import { redact, redactDeep } from '../lib/redact.js';
+import { detectLang, updateLang, languageNudge, type Lang } from '../lib/lang.js';
 
 /**
  * Phone session runner — does for a SIP call what the browser does for a WebRTC call:
@@ -25,6 +26,7 @@ export class PhoneRunner {
   private finalized = false;
   private handoffId: string | null = null;
   private humanName = 'the desk';
+  private userLang: Lang = 'unknown';
 
   constructor(public session: VoiceSessionRow, public callId: string, private greeting: string) {}
 
@@ -68,12 +70,15 @@ export class PhoneRunner {
       this.transcript.push({ role: 'assistant', text, at: new Date().toISOString() });
       this.emit('caption', { id: String(e.item_id ?? Date.now()), role: 'assistant', text, final: true });
       if (this.handoffId) await this.postHandoffMessage('agent', text);
+      const nudge = languageNudge(this.userLang, detectLang(text));
+      if (nudge) this.send({ type: 'conversation.item.create', item: { type: 'message', role: 'system', content: [{ type: 'input_text', text: nudge }] } });
       return;
     }
     if (type === 'conversation.item.input_audio_transcription.completed') {
       const text = String(e.transcript ?? '');
       if (!text.trim()) return;
       this.transcript.push({ role: 'user', text, at: new Date().toISOString() });
+      this.userLang = updateLang(this.userLang, text);
       this.emit('caption', { id: String(e.item_id ?? Date.now()), role: 'user', text, final: true });
       if (this.handoffId) await this.postHandoffMessage('citizen', text);
       return;

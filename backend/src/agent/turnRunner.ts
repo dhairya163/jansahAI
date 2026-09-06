@@ -8,6 +8,7 @@ import { PhoneRunner } from './phoneRunner.js';
 import { broadcast } from '../lib/supabase.js';
 import { redact, redactDeep } from '../lib/redact.js';
 import { twilioHangup } from '../lib/twilio.js';
+import { detectLang, updateLang, languageNudge, type Lang } from '../lib/lang.js';
 
 /**
  * Trial-safe phone bridge — Twilio trials strip <Dial><Sip>, so instead of streaming audio to the
@@ -54,6 +55,7 @@ export class TurnRunner {
   private notes: string[] = [];
   private pending: Promise<TurnResult> | null = null;
   private waits = 0;
+  private userLang: Lang = 'unknown';
 
   constructor(public session: VoiceSessionRow, public callSid: string | null, extraInstructions: string) {
     const sc = buildSessionConfig(`${extraInstructions}\n\n${PHONE_TEXT_RULES}`);
@@ -102,6 +104,7 @@ export class TurnRunner {
   private async runTurn(userText: string): Promise<TurnResult> {
     this.touch();
     if (userText) {
+      this.userLang = updateLang(this.userLang, userText);
       this.messages.push({ role: 'user', content: userText });
       await this.record('user', userText);
     } else if (!this.notes.length) {
@@ -125,6 +128,8 @@ export class TurnRunner {
       const say = r.content.replace(END_MARK, '').replace(/\s+/g, ' ').trim() || FALLBACK;
       this.messages.push({ role: 'assistant', content: say });
       await this.record('assistant', say);
+      const nudge = languageNudge(this.userLang, detectLang(say));
+      if (nudge) this.messages.push({ role: 'system', content: nudge });
       return { say, end };
     }
     return { say: FALLBACK, end: false };

@@ -18,9 +18,12 @@ export interface VoiceCallbacks {
   onTimer: (secondsLeft: number) => void;
 }
 
+import { detectLang, updateLang, languageNudge, type Lang } from './lang';
+
 export class VoiceClient {
   private pc: RTCPeerConnection | null = null;
   private dc: RTCDataChannel | null = null;
+  private userLang: Lang = 'unknown';
   private mic: MediaStream | null = null;
   private audioEl: HTMLAudioElement | null = null;
   private session: SessionInfo | null = null;
@@ -107,6 +110,12 @@ export class VoiceClient {
     this.mic?.getAudioTracks().forEach((t) => { t.enabled = !muted; });
   }
 
+  /** Out-of-band context for the model (handoff events, language corrections) — never shown as a caption. */
+  note(text: string, respond = true): void {
+    this.send({ type: 'conversation.item.create', item: { type: 'message', role: 'system', content: [{ type: 'input_text', text }] } });
+    if (respond) this.send({ type: 'response.create' });
+  }
+
   /** Type-instead panel → announced to the model as a user message (§12.2). */
   typeText(label: string, value: string): void {
     const text = `[user typed the ${label} on screen]: ${value}`;
@@ -142,6 +151,7 @@ export class VoiceClient {
         const text = String(e.transcript ?? this.assistantPartials.get(id) ?? '');
         this.assistantPartials.delete(id);
         this.cb.onCaption({ id, role: 'assistant', text, final: true });
+        { const nudge = languageNudge(this.userLang, detectLang(text)); if (nudge) this.note(nudge, false); }
         this.pushTranscript('assistant', text);
         return;
       }
@@ -157,6 +167,7 @@ export class VoiceClient {
         const id = String(e.item_id ?? 'u');
         const text = String(e.transcript ?? this.userPartials.get(id) ?? '');
         this.userPartials.delete(id);
+        this.userLang = updateLang(this.userLang, text);
         this.cb.onCaption({ id, role: 'user', text, final: true });
         this.pushTranscript('user', text);
         return;

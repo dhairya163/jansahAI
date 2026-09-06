@@ -93,6 +93,8 @@ export default function CallPage() {
   const [preview, setPreview] = useState<string | null>(null);
 
   const clientRef = useRef<VoiceClient | null>(null);
+
+  const announcedRef = useRef<string>('');
   const captionsScrollRef = useRef<HTMLDivElement | null>(null);
   const nearBottomRef = useRef(true);
   const toastSeq = useRef(0);
@@ -221,7 +223,11 @@ export default function CallPage() {
   useEffect(() => {
     if (mode !== 'web') return;
     clientRef.current?.setMuted(handoff?.status === 'accepted');
-    if (handoff?.status === 'closed') clientRef.current?.typeText('note', 'The desk operator has left the chat; please continue helping me.');
+    const key = handoff ? `${handoff.id}:${handoff.status}` : '';
+    if (!handoff || announcedRef.current === key) return;
+    announcedRef.current = key;
+    if (handoff.status === 'accepted') clientRef.current?.note(`[Operator ${handoff.name ?? 'from the Jansah desk'} has joined and is typing on the caller's screen. Say ONE short line in the caller's language: the operator is here now, please read and reply on the screen. Then stay silent until the operator leaves.]`);
+    if (handoff.status === 'closed') clientRef.current?.note('[The desk operator has left the conversation. Thank the caller in ONE short line, in their language, and continue the intake from where it stopped.]');
   }, [handoff?.status, mode]);
 
   // ended: fetch artifacts as the background immediates finish
@@ -239,7 +245,11 @@ export default function CallPage() {
 
   const askHuman = useCallback(async () => {
     if (!sessionToken) return;
-    try { const r = await requestHandoffApi(sessionToken, 'asked from the screen'); setHandoff({ id: r.id, status: r.status as HandoffState['status'] }); }
+    try {
+      const r = await requestHandoffApi(sessionToken, 'asked from the screen');
+      setHandoff({ id: r.id, status: r.status as HandoffState['status'] });
+      clientRef.current?.note("[The caller tapped 'Talk to a human' on screen. In ONE short line, in the caller's language, tell them a person from the Jansah desk is being connected and that you will stay with them until then. Then keep helping unless they prefer to wait.]");
+    }
     catch (e) { setErrorDetail((e as Error).message); }
   }, [sessionToken]);
 

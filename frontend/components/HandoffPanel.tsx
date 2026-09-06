@@ -47,7 +47,7 @@ export function HandoffPanel({ token, handoffId, channel, onStatus }: {
   const name = summary?.assigned_to ?? null;
 
   return (
-    <div className="card-tint toast-in" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-3)', minHeight: 0 }}>
+    <div className="card-tint toast-in" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-3)', flexShrink: 0 }}>
       <div className="callout-neem" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, padding: '8px 12px' }}>
         <span style={{ fontSize: 13 }}>
           {status === 'queued' && <><b>Connecting you to a person</b> · Jansah desk has your summary{channel === 'web' ? ' · your mic is paused' : ''}</>}
