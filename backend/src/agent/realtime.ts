@@ -134,6 +134,28 @@ export async function chatComplete(system: string, user: string, temperature = 0
   return data.choices?.[0]?.message?.content?.trim() ?? null;
 }
 
+export interface ToolCallMsg { id: string; type: 'function'; function: { name: string; arguments: string } }
+export interface ChatMsg { role: 'system' | 'user' | 'assistant' | 'tool'; content?: string | null; tool_calls?: ToolCallMsg[]; tool_call_id?: string }
+
+/** Chat-completions turn with the SAME 14 tools the Realtime session gets — used by the trial-safe phone bridge. */
+export async function chatWithTools(messages: ChatMsg[], model = config.phoneTextModel): Promise<{ content: string; toolCalls: ToolCallMsg[] } | null> {
+  const isReasoning = /^(gpt-5|o\d)/.test(model);
+  const res = await fetch(`${OA}/chat/completions`, {
+    method: 'POST', headers: authHeaders(),
+    body: JSON.stringify({
+      model,
+      ...(isReasoning ? { reasoning_effort: 'minimal' } : { temperature: 0.3 }),
+      messages,
+      tools: TOOLS.map((t) => ({ type: 'function', function: { name: t.name, description: t.description, parameters: t.parameters } })),
+      tool_choice: 'auto',
+    }),
+  });
+  if (!res.ok) { console.warn(`[chatWithTools] ${model} → ${res.status}: ${(await res.text()).slice(0, 200)}`); return null; }
+  const data = (await res.json()) as { choices?: { message?: { content?: string | null; tool_calls?: ToolCallMsg[] } }[] };
+  const m = data.choices?.[0]?.message;
+  return { content: (m?.content ?? '').trim(), toolCalls: m?.tool_calls ?? [] };
+}
+
 /** JSON-mode completion helper (radar signatures, briefs, handoff summaries). */
 export async function chatJson<T>(system: string, user: string, model = config.radarModel): Promise<T | null> {
   const isReasoning = /^(gpt-5|o\d)/.test(model);

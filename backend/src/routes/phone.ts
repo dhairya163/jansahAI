@@ -10,9 +10,10 @@ import { rateLimit } from '../lib/rateLimit.js';
 import { clientIp } from '../middleware/auth.js';
 import { broadcast } from '../lib/supabase.js';
 import { signCaseToken } from '../lib/jwt.js';
-import { twilioConfigured, twilioCreateCall, toIndianE164 } from '../lib/twilio.js';
+import { twilioConfigured, twilioCreateCall, twilioAccountType, toIndianE164 } from '../lib/twilio.js';
 import { acceptSipCall, rejectSipCall, sipUri, verifyOpenAIWebhook } from '../agent/realtime.js';
 import { PhoneRunner } from '../agent/phoneRunner.js';
+import { TurnRunner, REPROMPT, phoneRunnerFor } from '../agent/turnRunner.js';
 
 export const phoneRouter = Router();
 
@@ -29,10 +30,44 @@ function phoneReady(): { ok: boolean; why?: string } {
   return { ok: true };
 }
 
+/** 'sip' = OpenAI Realtime over SIP; 'twiml' = trial-safe speech loop (Twilio trials strip <Dial><Sip>). */
+let bridgeCache: { mode: 'sip' | 'twiml'; at: number } | null = null;
+async function bridgeMode(): Promise<'sip' | 'twiml'> {
+  if (config.phoneBridge !== 'auto') return config.phoneBridge;
+  if (bridgeCache && Date.now() - bridgeCache.at < 10 * 60_000) return bridgeCache.mode;
+  let mode: 'sip' | 'twiml' = 'sip';
+  try { if (/trial/i.test(await twilioAccountType())) mode = 'twiml'; } catch { /* provider without account type → sip */ }
+  bridgeCache = { mode, at: Date.now() };
+  return mode;
+}
+
+const xml = (t: string) => t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+const say = (t: string) => `<Say voice="${config.phoneTtsVoice}" language="${config.phoneTtsLang}">${xml(t)}</Say>`;
+const turnUrl = (sessionId: string, path = 'turn') => `${config.publicApiUrl}/api/phone/${path}?s=${sessionId}&t=${sig(sessionId)}`;
+const HINTS = 'UPI, OTP, Aadhaar, KYC, SBI, HDFC, ICICI, Paytm, PhonePe, Google Pay, lakh, rupees, FIR, WhatsApp, Instagram, Telegram';
+/** Speak, then listen: Twilio transcribes the caller and POSTs SpeechResult to /turn. */
+const gatherTwiml = (sessionId: string, text: string) =>
+  `<?xml version="1.0" encoding="UTF-8"?><Response><Gather input="speech" language="${config.phoneSttLang}" speechModel="${config.phoneSttModel}" ` +
+  `speechTimeout="auto" timeout="6" actionOnEmptyResult="true" hints="${xml(HINTS)}" action="${xml(turnUrl(sessionId))}" method="POST">${say(text)}</Gather></Response>`;
+const byeTwiml = (text: string) => `<?xml version="1.0" encoding="UTF-8"?><Response>${say(text)}<Hangup/></Response>`;
+/** The model is still working: a short filler (first time) or a beat of silence, then poll /turn-result again. */
+const waitTwiml = (sessionId: string, first: boolean) =>
+  `<?xml version="1.0" encoding="UTF-8"?><Response>${first ? say('जी, एक पल।') : '<Pause length="1"/>'}<Redirect method="POST">${xml(turnUrl(sessionId, 'turn-result'))}</Redirect></Response>`;
+
+const GREET_OUTBOUND = 'नमस्ते, मैं जनसह बोल रही हूँ। आपने वेबसाइट पर कॉल रिक्वेस्ट की थी। मैं एक इंडिपेंडेंट सेवा हूँ। बोलिए, क्या हुआ?';
+const GREET_INBOUND = 'नमस्ते, जनसह में आपका स्वागत है। मैं एक इंडिपेंडेंट सेवा हूँ। बोलिए, क्या हुआ?';
+
+/** Channel instructions shared by both bridges. */
+const phoneExtra = (session: { phoneMasked: string | null }) =>
+  'CHANNEL: PHONE CALL. There is no screen: never mention on-screen fields, toasts, typing, or links. ' +
+  (session.phoneMasked ? `The caller's phone number is already on file (${session.phoneMasked}) — do not ask for it. ` : '') +
+  'When you send the Aadhaar OTP, say it was sent to their registered mobile by SMS and ask them to read it out. ' +
+  'Read the case number digit by digit, twice, and offer to email the documents. Keep every turn to one or two short sentences — phone lines feel slow.';
+
 /** Public readiness + display number for the UI. */
-phoneRouter.get('/info', (_req, res) => {
+phoneRouter.get('/info', async (_req, res) => {
   const r = phoneReady();
-  res.json({ available: r.ok, number: config.twilioNumber || null, reason: r.ok ? null : r.why });
+  res.json({ available: r.ok, number: config.twilioNumber || null, reason: r.ok ? null : r.why, bridge: r.ok ? await bridgeMode() : null });
 });
 
 /** "Call me" — citizen gives a number + consent; we dial them and bridge to the same agent. */
@@ -83,7 +118,18 @@ phoneRouter.post('/callme', async (req, res) => {
 phoneRouter.post('/twiml', async (req, res) => {
   const sessionId = checkSig(req);
   if (!sessionId) { res.status(403).type('text/xml').send('<Response><Reject/></Response>'); return; }
-  await db.update(voiceSessions).set({ callStatus: 'answered' }).where(eq(voiceSessions.id, sessionId));
+  const callSid = String((req.body as Record<string, string>)?.CallSid ?? '') || null;
+  await db.update(voiceSessions).set({ callStatus: 'answered', ...(callSid ? { twilioCallSid: callSid } : {}) }).where(eq(voiceSessions.id, sessionId));
+  if ((await bridgeMode()) === 'twiml') {
+    const [session] = await db.select().from(voiceSessions).where(eq(voiceSessions.id, sessionId));
+    if (!session) { res.status(404).type('text/xml').send('<Response><Reject/></Response>'); return; }
+    const runner = new TurnRunner(session, callSid, phoneExtra(session));
+    runner.start();
+    runner.greet(GREET_OUTBOUND);
+    await db.update(voiceSessions).set({ callStatus: 'in_progress' }).where(eq(voiceSessions.id, sessionId));
+    res.type('text/xml').send(gatherTwiml(sessionId, GREET_OUTBOUND));
+    return;
+  }
   const uri = `${sipUri()}?X-Jansah-Session=${sessionId}`;
   res.type('text/xml').send(
     `<?xml version="1.0" encoding="UTF-8"?><Response><Dial answerOnBridge="true" timeout="25"><Sip>${uri}</Sip></Dial></Response>`,
@@ -91,11 +137,55 @@ phoneRouter.post('/twiml', async (req, res) => {
 });
 
 /** Inbound: someone dials our number → Twilio fetches this → bridge straight into OpenAI SIP (no session tag; the webhook creates one). */
-phoneRouter.post('/inbound', (_req, res) => {
+phoneRouter.post('/inbound', async (req, res) => {
+  if ((await bridgeMode()) === 'twiml') {
+    const body = (req.body ?? {}) as Record<string, string>;
+    const fromDigits = String(body.From ?? '').match(/\+?\d{8,15}/)?.[0] ?? null;
+    const [session] = await db.insert(voiceSessions).values({
+      sessionTokenHash: sha256(randomToken()), model: config.phoneTextModel, channel: 'phone',
+      phoneMasked: fromDigits ? maskPhone(fromDigits) : null, twilioCallSid: body.CallSid || null, callStatus: 'in_progress',
+    }).returning();
+    const runner = new TurnRunner(session, body.CallSid || null, phoneExtra(session));
+    runner.start();
+    runner.greet(GREET_INBOUND);
+    res.type('text/xml').send(gatherTwiml(session.id, GREET_INBOUND));
+    return;
+  }
   if (!config.openaiProjectId) { res.type('text/xml').send('<Response><Say>This line is not configured yet.</Say></Response>'); return; }
   res.type('text/xml').send(
     `<?xml version="1.0" encoding="UTF-8"?><Response><Dial answerOnBridge="true" timeout="25"><Sip>${sipUri()}</Sip></Dial></Response>`,
   );
+});
+
+const TERMINAL = ['completed', 'busy', 'no-answer', 'failed', 'canceled'];
+
+/** Trial bridge: Twilio posts what the caller said (SpeechResult); we answer with the next thing to say. */
+async function respondTurn(res: Response, sessionId: string, runner: TurnRunner, result: { say: string; end: boolean } | null): Promise<void> {
+  if (!result) { res.type('text/xml').send(waitTwiml(sessionId, runner.waitCount === 1)); return; }
+  if (result.end) { res.type('text/xml').send(byeTwiml(result.say)); void runner.end('agent_end'); return; }
+  res.type('text/xml').send(gatherTwiml(sessionId, result.say));
+}
+
+phoneRouter.post('/turn', async (req, res) => {
+  const sessionId = checkSig(req);
+  if (!sessionId) { res.status(403).type('text/xml').send('<Response><Reject/></Response>'); return; }
+  const body = (req.body ?? {}) as Record<string, string>;
+  const runner = TurnRunner.for(sessionId);
+  if (!runner) { res.type('text/xml').send(byeTwiml('माफ़ कीजिए, यह कॉल समाप्त हो गई है। कृपया दोबारा कॉल करें।')); return; }
+  if (TERMINAL.includes(String(body.CallStatus ?? ''))) { void runner.end(`twilio:${body.CallStatus}`); res.status(204).end(); return; }
+  const speech = String(body.SpeechResult ?? '').trim();
+  console.log(`[phone/twiml] turn session=${sessionId.slice(0, 8)} heard="${speech.slice(0, 80)}" conf=${body.Confidence ?? '-'}`);
+  void runner.turn(speech);
+  await respondTurn(res, sessionId, runner, await runner.waitPending(9_000));
+});
+
+phoneRouter.post('/turn-result', async (req, res) => {
+  const sessionId = checkSig(req);
+  if (!sessionId) { res.status(403).type('text/xml').send('<Response><Reject/></Response>'); return; }
+  const runner = TurnRunner.for(sessionId);
+  if (!runner) { res.type('text/xml').send(byeTwiml('माफ़ कीजिए, यह कॉल समाप्त हो गई है।')); return; }
+  const r = await runner.waitPending(9_000);
+  await respondTurn(res, sessionId, runner, r ?? (runner.waitCount >= 4 ? { say: REPROMPT, end: false } : null));
 });
 
 /** Twilio call-progress callback. */
@@ -105,8 +195,8 @@ phoneRouter.post('/status', async (req, res) => {
   if (!sessionId) return;
   const status = String((req.body as Record<string, string>)?.CallStatus ?? '');
   if (!status) return;
-  const terminal = ['completed', 'busy', 'no-answer', 'failed', 'canceled'].includes(status);
-  const runner = PhoneRunner.for(sessionId);
+  const terminal = TERMINAL.includes(status);
+  const runner = phoneRunnerFor(sessionId);
   if (terminal && runner) { void runner.end(`twilio:${status}`); return; }
   await db.update(voiceSessions).set({
     callStatus: status,
@@ -154,11 +244,7 @@ phoneRouter.post('/openai-webhook', async (req, res) => {
   await db.update(voiceSessions).set({ callId, callStatus: 'in_progress' }).where(eq(voiceSessions.id, session.id));
   session.callId = callId;
 
-  const extra =
-    'CHANNEL: PHONE CALL. There is no screen: never mention on-screen fields, toasts, typing, or links. ' +
-    (session.phoneMasked ? `The caller's phone number is already on file (${session.phoneMasked}) — do not ask for it. ` : '') +
-    'When you send the Aadhaar OTP, say it was sent to their registered mobile by SMS and ask them to read it out. ' +
-    'Read the case number digit by digit, twice, and offer to email the documents. Keep every turn to one or two short sentences — phone lines feel slow.';
+  const extra = phoneExtra(session);
   const greeting = inbound
     ? 'The call has just connected (the caller dialled Jansah). Greet warmly in a Hindi-English mix in ONE short line that includes "ek independent seva", then ask "Boliye, kya hua?"'
     : 'The call has just connected. This citizen tapped "Call me" on the Jansah website, so open with: "Namaste, main Jansah bol raha hoon — aapne website par call request ki thi. Main ek independent seva hoon. Boliye, kya hua?" (mirror their language after that).';

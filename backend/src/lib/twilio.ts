@@ -29,20 +29,39 @@ async function tw<T>(path: string, form?: Record<string, string>, method = 'POST
 export interface TwilioCall { sid: string; status: string }
 
 export async function twilioCreateCall(opts: { to: string; twimlUrl: string; statusCallback: string }): Promise<TwilioCall> {
-  const full = {
-    To: opts.to, From: config.twilioNumber, Url: opts.twimlUrl, Method: 'POST',
-    StatusCallback: opts.statusCallback, StatusCallbackMethod: 'POST', Timeout: '35',
-  };
-  try {
-    return await tw<TwilioCall>('/Calls.json', full);
-  } catch (err) {
-    // Trial accounts reject some optional parameters ("limited parameter access") — fall back to the bare minimum.
-    if (/disallowed parameters|limited parameter access/i.test((err as Error).message)) {
-      console.warn('[twilio] optional call params rejected (trial) — retrying with To/From/Url only');
-      return tw<TwilioCall>('/Calls.json', { To: opts.to, From: config.twilioNumber, Url: opts.twimlUrl });
+  const min = { To: opts.to, From: config.twilioNumber, Url: opts.twimlUrl };
+  // Trial accounts allow only To / Url / StatusCallback ("limited parameter access") — step down until Twilio accepts.
+  const ladder: Record<string, string>[] = [
+    { ...min, Method: 'POST', StatusCallback: opts.statusCallback, StatusCallbackMethod: 'POST', Timeout: '35' },
+    { ...min, StatusCallback: opts.statusCallback },
+    min,
+  ];
+  let lastErr: Error | null = null;
+  for (const form of ladder) {
+    try {
+      return await tw<TwilioCall>('/Calls.json', form);
+    } catch (err) {
+      lastErr = err as Error;
+      if (!/disallowed parameters|limited parameter access/i.test(lastErr.message)) throw lastErr;
+      console.warn(`[twilio] call params rejected (trial) — retrying with ${Object.keys(form).length - 1} fewer`);
     }
-    throw err;
   }
+  throw lastErr ?? new Error('Twilio: call failed');
+}
+
+/** End a call from our side (best effort — trial accounts may refuse the update). */
+export async function twilioHangup(callSid: string): Promise<void> {
+  try { await tw(`/Calls/${callSid}.json`, { Status: 'completed' }); } catch (err) { console.warn('[twilio] hangup:', (err as Error).message); }
+}
+
+let accountTypeCache: { type: string; at: number } | null = null;
+/** "Trial" | "Full" (Twilio); cached 10 min. Throws if the provider does not expose it. */
+export async function twilioAccountType(): Promise<string> {
+  if (accountTypeCache && Date.now() - accountTypeCache.at < 10 * 60_000) return accountTypeCache.type;
+  const d = await tw<{ type?: string }>('.json', undefined, 'GET');
+  const type = String(d.type ?? '');
+  accountTypeCache = { type, at: Date.now() };
+  return type;
 }
 
 /** Trial accounts: Twilio calls the number and asks for this validation code. */

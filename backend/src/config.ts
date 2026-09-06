@@ -53,6 +53,14 @@ export const config = {
   twilioNumber: process.env.TWILIO_NUMBER ?? '',
   openaiProjectId: process.env.OPENAI_PROJECT_ID ?? '',
   openaiWebhookSecret: process.env.OPENAI_WEBHOOK_SECRET ?? '',
+  // phone bridge: 'sip' = OpenAI Realtime over SIP (needs an upgraded telephony account, <Dial><Sip> is stripped on Twilio trials),
+  // 'twiml' = trial-safe speech loop (Twilio STT → text model + the same tools → Twilio TTS), 'auto' = twiml on a trial account.
+  phoneBridge: (process.env.PHONE_BRIDGE ?? 'auto') as 'sip' | 'twiml' | 'auto',
+  phoneTextModel: process.env.PHONE_TEXT_MODEL ?? 'gpt-4.1',          // fast: Twilio gives a webhook 15 s per turn
+  phoneSttModel: process.env.PHONE_STT_MODEL ?? 'experimental_conversations',   // hi-IN / en-IN capable Gather model
+  phoneSttLang: process.env.PHONE_STT_LANG ?? 'hi-IN',
+  phoneTtsVoice: process.env.PHONE_TTS_VOICE ?? 'Polly.Kajal-Neural', // bilingual Hindi / Indian-English voice
+  phoneTtsLang: process.env.PHONE_TTS_LANG ?? 'hi-IN',
   embeddingModel: process.env.EMBEDDING_MODEL ?? 'text-embedding-3-small',
   radarModel: process.env.RADAR_MODEL ?? process.env.TEXT_MODEL ?? 'gpt-4.1-mini',
   appName: 'Jansah.AI',

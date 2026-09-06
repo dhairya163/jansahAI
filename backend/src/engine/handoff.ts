@@ -7,7 +7,7 @@ import { addEvent } from './events.js';
 import { categoryLabel } from './labels.js';
 import { formatINR } from '../lib/normalize.js';
 import { chatJson } from '../agent/realtime.js';
-import { PhoneRunner } from '../agent/phoneRunner.js';
+import { phoneRunnerFor } from '../agent/turnRunner.js';
 
 /**
  * Human handoff — platform-only: the operator works from the ops console. On web calls the
@@ -55,7 +55,7 @@ export async function requestHandoff(opts: {
   if (opts.caseRow && opts.caseRow.status !== 'draft') {
     await addEvent(opts.caseRow.id, 'handoff_requested', 'citizen', { reason: opts.reason ?? null, channel: row.channel });
   }
-  PhoneRunner.for(opts.session.id)?.setHandoff(row.id);
+  phoneRunnerFor(opts.session.id)?.setHandoff(row.id);
   void broadcast(OPS_TOPIC, 'handoff_requested', await summarize(row));
   void broadcast(`session:${opts.session.id}`, 'handoff', { id: row.id, status: 'queued' });
 
@@ -92,7 +92,7 @@ export async function acceptHandoff(id: string, name: string): Promise<HandoffRo
   void broadcast(`handoff:${id}`, 'accepted', { name, message: { id: sys.id, sender: 'system', text: sys.text, at: sys.createdAt } });
   if (row.sessionId) {
     void broadcast(`session:${row.sessionId}`, 'handoff', { id, status: 'accepted', name });
-    PhoneRunner.for(row.sessionId)?.announceHuman(name);
+    phoneRunnerFor(row.sessionId)?.announceHuman(name);
   }
   if (row.caseId) await addEvent(row.caseId, 'handoff_accepted', 'ops', { name });
   void broadcast(OPS_TOPIC, 'handoff_updated', await summarize(row));
@@ -104,7 +104,7 @@ export async function postHumanMessage(id: string, text: string): Promise<void> 
   if (!row || row.status !== 'accepted') throw new Error('handoff not active');
   const [m] = await db.insert(handoffMessages).values({ handoffId: id, sender: 'human', text: redact(text) }).returning();
   void broadcast(`handoff:${id}`, 'message', { id: m.id, sender: 'human', name: row.assignedTo, text: m.text, at: m.createdAt });
-  if (row.sessionId) PhoneRunner.for(row.sessionId)?.relayHuman(text, row.assignedTo ?? 'the desk');
+  if (row.sessionId) phoneRunnerFor(row.sessionId)?.relayHuman(text, row.assignedTo ?? 'the desk');
 }
 
 export async function postCitizenMessage(id: string, sessionId: string, text: string): Promise<void> {
@@ -121,7 +121,7 @@ export async function closeHandoff(id: string, by: 'ops' | 'citizen' = 'ops'): P
   void broadcast(`handoff:${id}`, 'closed', { message: { id: sys.id, sender: 'system', text: sys.text, at: sys.createdAt } });
   if (row.sessionId) {
     void broadcast(`session:${row.sessionId}`, 'handoff', { id, status: 'closed' });
-    const runner = PhoneRunner.for(row.sessionId);
+    const runner = phoneRunnerFor(row.sessionId);
     if (runner) { runner.humanLeft(); runner.setHandoff(null); }
   }
   if (row.caseId) await addEvent(row.caseId, 'handoff_closed', by === 'ops' ? 'ops' : 'citizen', {});

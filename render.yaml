@@ -70,6 +70,10 @@ services:
         sync: false
       - key: TELEPHONY_API_BASE
         value: https://api.twilio.com/2010-04-01
+      - key: PHONE_BRIDGE
+        value: auto
+      - key: PHONE_TEXT_MODEL
+        value: gpt-4.1
       - key: TWILIO_ACCOUNT_SID
         sync: false
       - key: TWILIO_API_KEY_SID

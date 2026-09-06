@@ -94,6 +94,12 @@ speech is mirrored into the chat. Platform-only — no call transfer to a person
 auto-published at 2+ reports. The agent calls `find_similar_cases` once per intake and says one sentence.
 Seed synthetic signals + backfill real cases: `npm run seed:radar`.
 
+### Phone line on a Twilio trial
+
+Twilio trials strip `<Dial><Sip>` from TwiML and only let you call verified recipients **from the trial number Twilio assigns to that recipient** (Console → Phone Numbers → Verified Caller IDs / Voice → Try it out). So on a trial the backend switches to a **trial-safe speech loop** (`PHONE_BRIDGE=auto` detects the account type):
+
+`<Gather input="speech">` (Twilio STT, hi-IN) → `/api/phone/turn` → `chatWithTools()` with the **same system prompt and the same 14 tools** → `<Say>` (Polly Kajal, bilingual) → listen again. Captions, simulated SMS, registration, scam-radar and human-handoff events reach the web page exactly as with the SIP bridge. Turn latency is ~3–7 s; the Realtime SIP bridge takes over automatically once the account is upgraded (or set `PHONE_BRIDGE=sip`).
+
 ## Tests & QA
 
 ```bash
