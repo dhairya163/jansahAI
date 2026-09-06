@@ -64,6 +64,25 @@ const phoneExtra = (session: { phoneMasked: string | null }) =>
   'When you send the Aadhaar OTP, say it was sent to their registered mobile by SMS and ask them to read it out. ' +
   'Read the case number digit by digit, twice, and offer to email the documents. Keep every turn to one or two short sentences — phone lines feel slow.';
 
+/**
+ * Phone sessions are finalized by the in-memory runner (SIP or TwiML). If the process restarts mid-call
+ * (deploy, crash) or the carrier never sends a status callback, the row would stay "in_progress" forever —
+ * so anything live with no runner behind it is closed here.
+ */
+const LIVE = ['requested', 'ringing', 'answered', 'in_progress'];
+async function closeOrphan(sessionId: string, reason: string): Promise<void> {
+  await db.update(voiceSessions).set({ callStatus: 'completed', endedAt: new Date(), phoneE164: null })
+    .where(and(eq(voiceSessions.id, sessionId), inArray(voiceSessions.callStatus, LIVE)));
+  void broadcast(`session:${sessionId}`, 'call_status', { status: 'completed', reason });
+}
+async function sweepOrphans(): Promise<void> {
+  const stale = new Date(Date.now() - (config.maxSessionMinutes + 2) * 60_000);
+  const rows = await db.select({ id: voiceSessions.id }).from(voiceSessions)
+    .where(and(eq(voiceSessions.channel, 'phone'), inArray(voiceSessions.callStatus, LIVE), dsql`${voiceSessions.startedAt} < ${stale}`));
+  for (const r of rows) if (!phoneRunnerFor(r.id)) await closeOrphan(r.id, 'stale');
+}
+setInterval(() => { void sweepOrphans().catch((e) => console.warn('[phone] sweep:', (e as Error).message)); }, 60_000).unref();
+
 /** Public readiness + display number for the UI. */
 phoneRouter.get('/info', async (_req, res) => {
   const r = phoneReady();
@@ -271,6 +290,10 @@ phoneRouter.get('/session', async (req, res) => {
   if (typeof token !== 'string') { res.status(401).json({ error: { code: 'unauthorized', message: 'X-Session-Token required' } }); return; }
   const [s] = await db.select().from(voiceSessions).where(eq(voiceSessions.sessionTokenHash, sha256(token))).orderBy(desc(voiceSessions.startedAt)).limit(1);
   if (!s) { res.status(404).json({ error: { code: 'not_found', message: 'No session' } }); return; }
+  if (s.callStatus && LIVE.includes(s.callStatus) && !phoneRunnerFor(s.id) && Date.now() - new Date(s.startedAt).getTime() > 90_000) {
+    await closeOrphan(s.id, 'no_runner');
+    s.callStatus = 'completed'; s.endedAt = new Date();
+  }
   let caseNumber: string | null = null; let caseToken: string | null = null;
   if (s.caseId) {
     const [c] = await db.select({ caseNumber: cases.caseNumber, status: cases.status }).from(cases).where(eq(cases.id, s.caseId));
