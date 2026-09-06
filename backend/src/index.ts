@@ -39,7 +39,7 @@ app.use(cors({
 app.use(express.json({ limit: '1mb', verify: (req, _res, buf) => { (req as express.Request & { rawBody?: Buffer }).rawBody = buf; } }));
 app.use(express.urlencoded({ extended: false }));   // Twilio callbacks
 
-app.get('/health', (_req, res) => res.json({ ok: true, name: config.appName, demo: config.demoMode }));
+app.get('/health', (_req, res) => res.json({ ok: true, name: config.appName, demo: config.demoMode, commit: (process.env.RENDER_GIT_COMMIT ?? '').slice(0, 7) || null }));
 
 app.use('/api/realtime', realtimeRouter);
 app.use('/api/tools', toolsRouter);
