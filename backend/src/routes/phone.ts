@@ -126,11 +126,13 @@ phoneRouter.post('/callme', async (req, res) => {
     const msg = (err as Error).message;
     await db.update(voiceSessions).set({ callStatus: 'failed', endedAt: new Date(), phoneE164: null }).where(eq(voiceSessions.id, session.id));
     console.warn('[phone] twilio create failed:', msg);
-    const hint = /573003|isn't assigned to this verified/i.test(msg)
-      ? `Twilio trial: calls to this number must come from the trial number Twilio assigned to it, not ${config.twilioNumber}. Copy the "From" number from Twilio Console → Voice → Try it out → Make a call (or Phone Numbers → Verified Caller IDs) and set TWILIO_NUMBER to it.`
-      : /21219|21210|not yet verified|unverified/i.test(msg)
-        ? 'This number is not verified on the Twilio trial account yet — verify it in Twilio (or upgrade the account).'
-        : msg;
+    const hint = /573002|not assigned for voice calls to this destination|add the "to" number as a verified recipient/i.test(msg)
+      ? `On the trial line we can only call verified numbers. Add ${maskPhone(e164)} as a Verified Caller ID in Twilio (Console → Numbers & senders → Verified Caller IDs — Twilio sends that phone a code), then try again.`
+      : /573003|isn't assigned to this verified/i.test(msg)
+        ? `Twilio trial: calls to ${maskPhone(e164)} must come from the trial number Twilio assigned to it. Copy the "From" number from Twilio Console → Voice → Try out Voice (Make a call) and add it to TWILIO_FROM_MAP as ${e164}:+1XXXXXXXXXX.`
+        : /21219|21210|not yet verified|unverified/i.test(msg)
+          ? 'This number is not verified on the Twilio trial account yet — verify it in Twilio (or upgrade the account).'
+          : msg;
     res.status(502).json({ error: { code: 'dial_failed', message: hint } });
   }
 });

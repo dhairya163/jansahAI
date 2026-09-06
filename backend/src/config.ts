@@ -51,6 +51,8 @@ export const config = {
   twilioApiKeySid: process.env.TWILIO_API_KEY_SID ?? '',
   twilioApiKeySecret: process.env.TWILIO_API_KEY_SECRET ?? '',
   twilioNumber: process.env.TWILIO_NUMBER ?? '',
+  // trial accounts: Twilio assigns a trial From number per verified recipient — "+91XXXXXXXXXX:+1XXXXXXXXXX,..."
+  twilioFromMap: process.env.TWILIO_FROM_MAP ?? '',
   openaiProjectId: process.env.OPENAI_PROJECT_ID ?? '',
   openaiWebhookSecret: process.env.OPENAI_WEBHOOK_SECRET ?? '',
   // phone bridge: 'sip' = OpenAI Realtime over SIP (needs an upgraded telephony account, <Dial><Sip> is stripped on Twilio trials),

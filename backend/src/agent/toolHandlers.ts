@@ -77,6 +77,17 @@ async function broadcastSlots(session: VoiceSessionRow, c: CaseRow, extra: Recor
 type ToolResult = Record<string, unknown>;
 
 export async function handleTool(name: string, args: Record<string, unknown>, ctx: ToolContext): Promise<ToolResult> {
+  const out = await dispatchTool(name, args, ctx);
+  // scam radar that finished after its own tool call returned rides on the next tool result
+  const cid = ctx.session.caseId;
+  if (cid && radarPending.has(cid) && !radarAnnounced.has(cid)) {
+    Object.assign(out, radarPending.get(cid));
+    radarPending.delete(cid); radarAnnounced.add(cid);
+  }
+  return out;
+}
+
+async function dispatchTool(name: string, args: Record<string, unknown>, ctx: ToolContext): Promise<ToolResult> {
   switch (name) {
     case 'classify_category': return classifyCategory(args, ctx);
     case 'set_slots': return setSlots(args, ctx);
@@ -116,7 +127,9 @@ async function classifyCategory(args: Record<string, unknown>, ctx: ToolContext)
   await broadcastSlots(ctx.session, c);
 
   const slots = (c.slots ?? {}) as Record<string, unknown>;
+  const radar = await similarForResult(ctx, updated);
   return {
+    ...radar,
     ok: true, category, track: pb.track,
     category_label: categoryLabel(category),
     sensitive: !!pb.sensitive,
@@ -150,22 +163,59 @@ async function setSlots(args: Record<string, unknown>, ctx: ToolContext): Promis
   c = updated;
   await broadcastSlots(ctx.session, c, { flash: Object.keys(saved) });
 
-  // scam radar: pre-compute the draft's signature in the background so find_similar_cases is instant
-  if (typeof saved.narrative === 'string' && c.category !== 'unclassified') {
-    const sid = ctx.session.id; const cid = c.id;
-    setImmediate(() => {
-      void computeDraftSignal(cid).then((r) => {
-        if (r?.similar) void broadcast(`session:${sid}`, 'pattern', similarPayload(r.similar));
-      }).catch(() => undefined);
-    });
-  }
-
   const pb = getPlaybook(c.category);
   return {
     saved: Object.keys(saved),
     ...(Object.keys(rejected).length > 0 ? { rejected } : {}),
     missing: pb ? missingSlots(pb.slots, merged) : [],
+    // scam radar: once the story is on file, the similar-cases line rides on this result (no extra tool call needed)
+    ...(typeof saved.narrative === 'string' ? await similarForResult(ctx, c) : {}),
   };
+}
+
+/** Per-case "already told the caller" marker, and radar results that landed after their tool call returned. */
+const radarAnnounced = new Set<string>();
+const radarPending = new Map<string, Record<string, unknown>>();
+
+function radarNote(payload: ReturnType<typeof similarPayload>): Record<string, unknown> {
+  const where = payload.top_regions[0] ? ` (${payload.top_regions[0].count} from ${payload.top_regions[0].region})` : '';
+  return {
+    similar_cases: payload,
+    note: `SCAM RADAR: this same type of scam has been reported ${payload.count_30d} times in the last 30 days${where}. In your NEXT reply say ONE sentence about it, in the caller's language ("haan, isi tarah ke ${payload.count_30d} cases pichhle 30 din mein report hue hain — aap akele nahin hain, isse complaint aur strong hoti hai"), then continue.`,
+  };
+}
+
+/**
+ * Scam radar on the tool's own result: compute the draft signature (bounded wait — the background
+ * job finishes it if we time out) and, if similar cases exist, hand the model the ONE-sentence line
+ * it must say next. Runs once per case.
+ */
+async function similarForResult(ctx: ToolContext, c: CaseRow): Promise<Record<string, unknown>> {
+  if (radarAnnounced.has(c.id) || c.category === 'unclassified') return {};
+  const slots = (c.slots ?? {}) as Record<string, unknown>;
+  if (typeof slots.narrative !== 'string') return {};
+  const sid = ctx.session.id;
+  let similar = cachedSignal(c)?.similar ?? null;
+  if (!cachedSignal(c)) {
+    const job = computeDraftSignal(c.id).catch(() => null);
+    const r = await Promise.race([job, new Promise<null>((ok) => setTimeout(() => ok(null), 6000))]);
+    if (r) similar = r.similar;
+    else {
+      // still computing — the page gets the badge when it lands and the line rides on the next tool result
+      void job.then((late) => {
+        if (!late?.similar || late.similar.count_30d < 1 || radarAnnounced.has(c.id)) return;
+        const payload = similarPayload(late.similar);
+        void broadcast(`session:${sid}`, 'pattern', payload);
+        radarPending.set(c.id, radarNote(payload));
+      });
+      return {};
+    }
+  }
+  radarAnnounced.add(c.id);
+  if (!similar || similar.count_30d < 1) return {};
+  const payload = similarPayload(similar);
+  void broadcast(`session:${sid}`, 'pattern', payload);
+  return radarNote(payload);
 }
 
 async function sendAadhaarOtp(args: Record<string, unknown>, ctx: ToolContext): Promise<ToolResult> {
@@ -442,6 +492,7 @@ async function findSimilarCases(ctx: ToolContext): Promise<ToolResult> {
   if (!similar || similar.count_30d < 1) {
     return { count_30d: 0, note: 'No recognised pattern yet — say nothing about patterns and continue.' };
   }
+  radarAnnounced.add(c.id);
   const payload = similarPayload(similar);
   await broadcast(sessionTopic(ctx.session), 'pattern', payload);
   const where = payload.top_regions[0] ? ` (${payload.top_regions[0].count} from ${payload.top_regions[0].region})` : '';

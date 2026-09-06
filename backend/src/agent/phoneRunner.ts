@@ -119,6 +119,7 @@ export class PhoneRunner {
           this.emit('registered', { case_number: output.case_number, case_token: output.case_token });
         }
         if (name === 'find_similar_cases' && output.count_30d !== undefined) this.emit('pattern', output);
+      if (output.similar_cases) this.emit('pattern', output.similar_cases);
       }
       this.send({ type: 'conversation.item.create', item: { type: 'function_call_output', call_id: callId, output: JSON.stringify(output) } });
       this.respond();

@@ -158,6 +158,7 @@ export class TurnRunner {
       if (output.toast) this.emit('sms', output.toast);
       if (name === 'register_case' && output.registered) this.emit('registered', { case_number: output.case_number, case_token: output.case_token });
       if (name === 'find_similar_cases' && output.count_30d !== undefined) this.emit('pattern', output);
+      if (output.similar_cases) this.emit('pattern', output.similar_cases);
     }
     return output;
   }

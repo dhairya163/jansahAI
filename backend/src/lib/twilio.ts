@@ -28,8 +28,17 @@ async function tw<T>(path: string, form?: Record<string, string>, method = 'POST
 
 export interface TwilioCall { sid: string; status: string }
 
+/** The From number for a destination: per-recipient trial mapping first, then the default line. */
+export function fromNumberFor(to: string): string {
+  for (const pair of config.twilioFromMap.split(',')) {
+    const [dest, from] = pair.split(':').map((x) => x.trim());
+    if (dest && from && dest === to) return from;
+  }
+  return config.twilioNumber;
+}
+
 export async function twilioCreateCall(opts: { to: string; twimlUrl: string; statusCallback: string }): Promise<TwilioCall> {
-  const min = { To: opts.to, From: config.twilioNumber, Url: opts.twimlUrl };
+  const min = { To: opts.to, From: fromNumberFor(opts.to), Url: opts.twimlUrl };
   // Trial accounts allow only To / Url / StatusCallback ("limited parameter access") — step down until Twilio accepts.
   const ladder: Record<string, string>[] = [
     { ...min, Method: 'POST', StatusCallback: opts.statusCallback, StatusCallbackMethod: 'POST', Timeout: '35' },
