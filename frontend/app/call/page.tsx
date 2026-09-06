@@ -311,9 +311,9 @@ export default function CallPage() {
               {phoneErr && <p style={{ color: 'var(--gerua-800)', fontSize: 13 }}>{phoneErr}</p>}
               <button className="btn" style={{ marginTop: 'auto', minHeight: 56, borderColor: 'var(--haldi-600)', color: 'var(--haldi-800)', fontWeight: 600 }}
                 disabled={!phoneAvail?.available || phoneBusy || phoneInput.replace(/\D/g, '').length !== 10} onClick={() => void startPhone()}>
-                📞 {phoneBusy ? 'Dialling…' : phoneAvail?.available ? 'Call me' : 'Phone line coming soon'}
+                📞 {phoneBusy ? 'Dialling…' : 'Call me'}
               </button>
-              {phoneAvail && !phoneAvail.available && <p className="faint" style={{ fontSize: 11.5 }}>{phoneAvail.reason}</p>}
+              {phoneAvail && !phoneAvail.available && <p className="faint" style={{ fontSize: 11.5 }}>The phone line is being set up — the browser call works right now.</p>}
             </div>
           </div>
           <div style={{ display: 'flex', gap: 'var(--sp-4)', marginTop: 'var(--sp-6)', alignItems: 'center', flexWrap: 'wrap' }}>
