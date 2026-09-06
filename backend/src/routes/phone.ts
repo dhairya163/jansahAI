@@ -86,7 +86,8 @@ setInterval(() => { void sweepOrphans().catch((e) => console.warn('[phone] sweep
 /** Public readiness + display number for the UI. */
 phoneRouter.get('/info', async (_req, res) => {
   const r = phoneReady();
-  res.json({ available: r.ok, number: config.twilioNumber || null, reason: r.ok ? null : r.why, bridge: r.ok ? await bridgeMode() : null });
+  const mapped = config.twilioFromMap.split(',').map((x) => x.trim()).filter((x) => x.includes(':')).map((x) => maskPhone(x.split(':')[0]));
+  res.json({ available: r.ok, number: config.twilioNumber || null, reason: r.ok ? null : r.why, bridge: r.ok ? await bridgeMode() : null, from_map: mapped });
 });
 
 /** "Call me" — citizen gives a number + consent; we dial them and bridge to the same agent. */
