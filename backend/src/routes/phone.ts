@@ -90,6 +90,14 @@ phoneRouter.post('/twiml', async (req, res) => {
   );
 });
 
+/** Inbound: someone dials our number → Twilio fetches this → bridge straight into OpenAI SIP (no session tag; the webhook creates one). */
+phoneRouter.post('/inbound', (_req, res) => {
+  if (!config.openaiProjectId) { res.type('text/xml').send('<Response><Say>This line is not configured yet.</Say></Response>'); return; }
+  res.type('text/xml').send(
+    `<?xml version="1.0" encoding="UTF-8"?><Response><Dial answerOnBridge="true" timeout="25"><Sip>${sipUri()}</Sip></Dial></Response>`,
+  );
+});
+
 /** Twilio call-progress callback. */
 phoneRouter.post('/status', async (req, res) => {
   const sessionId = checkSig(req);
