@@ -18,6 +18,8 @@ import { humanizeEvent, timelineTimestamp } from '../engine/events.js';
 import { ARTIFACT_LABELS } from '../pdf/render.js';
 import { formatCaseNumber } from '../lib/ids.js';
 import { signCaseToken } from '../lib/jwt.js';
+import { requestHandoff } from '../engine/handoff.js';
+import { computeDraftSignal, cachedSignal } from '../engine/radar.js';
 
 export class ToolError extends Error {
   constructor(public code: string, message: string, public status = 422) { super(message); }
@@ -88,6 +90,8 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
     case 'withdraw_case': return withdrawCase(args, ctx);
     case 'check_suspect': return checkSuspect(args, ctx);
     case 'get_guidance': return guidance(args, ctx);
+    case 'request_human': return requestHuman(args, ctx);
+    case 'find_similar_cases': return findSimilarCases(ctx);
     default:
       throw new ToolError('unknown_tool', `No such tool: ${name}`, 404);
   }
@@ -145,6 +149,16 @@ async function setSlots(args: Record<string, unknown>, ctx: ToolContext): Promis
   const [updated] = await db.update(cases).set(top).where(eq(cases.id, c.id)).returning();
   c = updated;
   await broadcastSlots(ctx.session, c, { flash: Object.keys(saved) });
+
+  // scam radar: pre-compute the draft's signature in the background so find_similar_cases is instant
+  if (typeof saved.narrative === 'string' && c.category !== 'unclassified') {
+    const sid = ctx.session.id; const cid = c.id;
+    setImmediate(() => {
+      void computeDraftSignal(cid).then((r) => {
+        if (r?.similar) void broadcast(`session:${sid}`, 'pattern', similarPayload(r.similar));
+      }).catch(() => undefined);
+    });
+  }
 
   const pb = getPlaybook(c.category);
   return {
@@ -394,4 +408,45 @@ async function guidance(args: Record<string, unknown>, ctx: ToolContext): Promis
     return { key: g.key, title: isHindi ? g.hi.title : g.en.title, body };
   });
   return { language: isHindi ? 'hi' : 'en', items, note: 'Read these verbatim; do not embellish.' };
+}
+
+// ── v2: human handoff + scam radar ────────────────────────────────────────────
+
+async function requestHuman(args: Record<string, unknown>, ctx: ToolContext): Promise<ToolResult> {
+  const c = await getDraftCase(ctx.session);
+  const reason = typeof args.reason === 'string' ? args.reason.slice(0, 300) : undefined;
+  const urgency = args.urgency === 'high' ? 'high' : 'normal';
+  const { handoff, already } = await requestHandoff({ session: ctx.session, caseRow: c, reason, urgency, source: 'agent' });
+  const phone = ctx.session.channel === 'phone';
+  return {
+    queued: true, already, handoff_id: handoff.id, status: handoff.status,
+    note: phone
+      ? 'Tell the caller in one line that a person from the Jansah desk is being connected and will speak through you in a moment. Stay with them; keep helping until the operator joins.'
+      : 'Tell the caller in one line that a person from the Jansah desk is joining and will type in the chat panel on their screen. Stay with them meanwhile.',
+  };
+}
+
+function similarPayload(s: { pattern_id: string; title: string; count_30d: number; report_count: number; regions: Record<string, number> }) {
+  const top = Object.entries(s.regions).sort((a, b) => b[1] - a[1]).slice(0, 2).map(([region, count]) => ({ region, count }));
+  return { pattern_id: s.pattern_id, pattern_title: s.title, count_30d: s.count_30d, report_count: s.report_count, top_regions: top };
+}
+
+async function findSimilarCases(ctx: ToolContext): Promise<ToolResult> {
+  const c = await getDraftCase(ctx.session);
+  if (!c) throw new ToolError('no_case', 'Capture the story first (classify + narrative).');
+  let similar = cachedSignal(c)?.similar ?? null;
+  if (!cachedSignal(c)) {
+    const r = await computeDraftSignal(c.id);
+    similar = r?.similar ?? null;
+  }
+  if (!similar || similar.count_30d < 1) {
+    return { count_30d: 0, note: 'No recognised pattern yet — say nothing about patterns and continue.' };
+  }
+  const payload = similarPayload(similar);
+  await broadcast(sessionTopic(ctx.session), 'pattern', payload);
+  const where = payload.top_regions[0] ? ` (${payload.top_regions[0].count} from ${payload.top_regions[0].region})` : '';
+  return {
+    ...payload,
+    note: `Say this in ONE sentence, in the caller's language: similar cases were reported ${payload.count_30d} times in the last 30 days${where} — they are not alone and it strengthens the complaint. Then continue; do not elaborate unless asked.`,
+  };
 }

@@ -12,6 +12,8 @@ import { categoryLabel, statusLabel } from '../engine/labels.js';
 import { generateArtifact, ARTIFACT_LABELS } from '../pdf/render.js';
 import { sendCaseEmail } from '../email/send.js';
 import { formatINR } from '../lib/normalize.js';
+import { opsVerifyCaller } from './phone.js';
+import { twilioListNumbers, twilioBuyNumber, twilioConfigured } from '../lib/twilio.js';
 
 export const opsRouter = Router();
 opsRouter.use(opsBasicAuth);
@@ -205,6 +207,18 @@ opsRouter.post('/cases/:id/:action', async (req, res) => {
   } catch (err) {
     opsError(res, err);
   }
+});
+
+/** Phone-line admin: verify a caller on the Twilio trial, list/buy numbers. */
+opsRouter.post('/phone/verify-caller', async (req, res) => { await opsVerifyCaller(req, res, String((req.body as { phone?: string })?.phone ?? '')); });
+opsRouter.get('/phone/numbers', async (_req, res) => {
+  if (!twilioConfigured()) { res.json({ configured: false, numbers: [] }); return; }
+  try { res.json({ configured: true, numbers: await twilioListNumbers(), active: config.twilioNumber || null }); }
+  catch (err) { res.status(502).json({ error: { code: 'twilio', message: (err as Error).message } }); }
+});
+opsRouter.post('/phone/buy-number', async (_req, res) => {
+  try { res.json({ number: await twilioBuyNumber('US') }); }
+  catch (err) { res.status(502).json({ error: { code: 'twilio', message: (err as Error).message } }); }
 });
 
 /** §24 usage widget + §28 cost guards. */

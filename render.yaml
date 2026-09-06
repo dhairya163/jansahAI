@@ -65,3 +65,22 @@ services:
         value: "50"
       - key: PURGE_DAYS
         value: "7"
+      # v2 — phone line (Twilio trial + OpenAI SIP) and scam radar
+      - key: PUBLIC_API_URL
+        sync: false
+      - key: TWILIO_ACCOUNT_SID
+        sync: false
+      - key: TWILIO_API_KEY_SID
+        sync: false
+      - key: TWILIO_API_KEY_SECRET
+        sync: false
+      - key: TWILIO_NUMBER
+        sync: false
+      - key: OPENAI_PROJECT_ID
+        sync: false
+      - key: OPENAI_WEBHOOK_SECRET
+        sync: false
+      - key: EMBEDDING_MODEL
+        value: text-embedding-3-small
+      - key: RADAR_MODEL
+        value: gpt-4.1-mini

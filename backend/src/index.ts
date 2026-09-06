@@ -9,6 +9,9 @@ import { toolsRouter } from './routes/tools.js';
 import { casesRouter } from './routes/cases.js';
 import { artifactsRouter } from './routes/artifacts.js';
 import { opsRouter, jobsRouter } from './routes/ops.js';
+import { phoneRouter } from './routes/phone.js';
+import { handoffRouter } from './routes/handoff.js';
+import { patternsRouter } from './routes/patterns.js';
 import { categoryLabel, statusLabel } from './engine/labels.js';
 import { virtualDay } from './engine/clocks.js';
 
@@ -33,7 +36,8 @@ app.use(cors({
     cb(null, ok);
   },
 }));
-app.use(express.json({ limit: '1mb' }));
+app.use(express.json({ limit: '1mb', verify: (req, _res, buf) => { (req as express.Request & { rawBody?: Buffer }).rawBody = buf; } }));
+app.use(express.urlencoded({ extended: false }));   // Twilio callbacks
 
 app.get('/health', (_req, res) => res.json({ ok: true, name: config.appName, demo: config.demoMode }));
 
@@ -43,6 +47,9 @@ app.use('/api/cases', casesRouter);
 app.use('/api/artifacts', artifactsRouter);
 app.use('/api/ops', opsRouter);
 app.use('/api/jobs', jobsRouter);
+app.use('/api/phone', phoneRouter);
+app.use('/api', handoffRouter);
+app.use('/api/patterns', patternsRouter);
 
 /** §27 demo picker — seeded personas, one click from /track?demo=1 (DEMO_MODE only; safe subset). */
 app.get('/api/demo/cases', async (_req, res) => {

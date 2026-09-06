@@ -1,6 +1,8 @@
 'use client';
 import { Fragment, useCallback, useEffect, useState } from 'react';
 import { BrandRow } from '@/components/chrome';
+import { HandoffQueue } from '@/components/HandoffQueue';
+import { PhoneAdmin } from '@/components/PhoneAdmin';
 import {
   opsFetchCases, opsFetchCase, opsAction, opsUsage, opsTick, opsArtifactUrl,
   fmtCase, fmtINR, type OpsCase, type OpsUsage, type TimelineLine, ApiError,
@@ -142,6 +144,9 @@ export default function OpsPage() {
       </div>
 
       <div className="wrap" style={{ paddingTop: 'var(--sp-6)', paddingBottom: 'var(--sp-9)' }}>
+        <HandoffQueue auth={auth} />
+        <PhoneAdmin auth={auth} />
+        <p className="muted" style={{ fontSize: 12, fontWeight: 600, letterSpacing: '.06em', marginBottom: 'var(--sp-3)' }}>CASES</p>
         <div style={{ display: 'flex', gap: 8, marginBottom: 'var(--sp-4)', flexWrap: 'wrap', alignItems: 'center' }}>
           {['', 'registered', 'under_process', 'stalled', 'escalated_l1', 'escalated_l2', 'fir_registered', 'resolved'].map((s2) => (
             <button key={s2} className={`chip ${filter.status === s2 ? 'chip-neem' : 'chip-line'}`}

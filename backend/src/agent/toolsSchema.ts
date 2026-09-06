@@ -93,6 +93,19 @@ export const TOOLS = [
     },
   },
   {
+    type: 'function', name: 'request_human',
+    description: 'Hand the caller to a human operator at the Jansah desk (the operator replies through the platform). Call immediately when the caller asks for a person, or when they are in distress.',
+    parameters: {
+      type: 'object',
+      properties: { reason: { type: 'string' }, urgency: { type: 'string', enum: ['normal', 'high'] } },
+    },
+  },
+  {
+    type: 'function', name: 'find_similar_cases',
+    description: 'Scam radar: how many similar incidents were reported recently. Call ONCE after the story is captured (category set, narrative saved). Say the result in one sentence.',
+    parameters: { type: 'object', properties: {} },
+  },
+  {
     type: 'function', name: 'get_guidance',
     description: 'Fetch the reviewed guidance strings for a category (optionally one topic). Read them verbatim.',
     parameters: {

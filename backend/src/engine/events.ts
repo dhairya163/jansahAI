@@ -17,7 +17,8 @@ export type EventType =
   | 'freeze_confirmed' | 'suspect_match' | 'ezero_fir_notice' | 'clock_fired' | 'clock_skipped'
   | 'status_changed' | 'fir_marked' | 'restoration_offered' | 'restoration_requested'
   | 'note' | 'time_advanced' | 'withdrawn' | 'platform_ack' | 'content_removed'
-  | 'amount_restored' | 'immediate_failed' | 'offer';
+  | 'amount_restored' | 'immediate_failed' | 'offer'
+  | 'handoff_requested' | 'handoff_accepted' | 'handoff_closed' | 'pattern_matched';
 
 export async function addEvent(
   caseId: string,
@@ -172,6 +173,19 @@ export function humanizeEvent(e: CaseEventRow): TimelineLine {
       set(`Next step available: ${g?.en.title ?? p.key}`, `अगला कदम उपलब्ध: ${g?.hi.title ?? p.key}`);
       break;
     }
+    case 'handoff_requested':
+      set('You asked to speak to a person — request sent to the Jansah desk', 'आपने किसी व्यक्ति से बात करने को कहा — अनुरोध डेस्क को भेजा गया');
+      break;
+    case 'handoff_accepted':
+      set(`${p.name ?? 'An operator'} from the Jansah desk joined the conversation`, `${p.name ?? 'एक ऑपरेटर'} डेस्क से बातचीत में जुड़े`);
+      break;
+    case 'handoff_closed':
+      set('Conversation with the desk ended', 'डेस्क से बातचीत समाप्त');
+      break;
+    case 'pattern_matched':
+      set(`Matches a recognised scam pattern — ${p.count_30d ?? p.report_count ?? '?'} similar reports in 30 days`,
+        `पहचाने गए धोखाधड़ी पैटर्न से मेल — 30 दिनों में ${p.count_30d ?? p.report_count ?? '?'} मिलते-जुलते मामले`);
+      break;
     case 'immediate_failed':
       set(`A background step failed and was logged (${p.step ?? ''})`, `एक पिछला कदम विफल रहा (${p.step ?? ''})`);
       break;

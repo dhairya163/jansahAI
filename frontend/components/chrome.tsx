@@ -99,6 +99,7 @@ export function Nav({ right }: { right?: React.ReactNode }) {
           <div className="navlinks">
             <Link href="/about">How it works</Link>
             <Link href="/video">Video</Link>
+            <Link href="/patterns">Scam radar</Link>
             <Link href="/track">Track case</Link>
           </div>
         )}

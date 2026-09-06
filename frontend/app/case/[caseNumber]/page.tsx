@@ -193,6 +193,22 @@ function CaseInner() {
               </div>
             )}
 
+            {/* scam radar match */}
+            {data.pattern && (
+              <div style={{ background: 'var(--gerua-100)', borderRadius: 'var(--r-3)', padding: 'var(--sp-5)', display: 'flex', justifyContent: 'space-between', gap: 'var(--sp-4)', alignItems: 'center', flexWrap: 'wrap' }}>
+                <div style={{ flex: 1, minWidth: 240 }}>
+                  <p style={{ fontSize: 15, fontWeight: 500, color: 'var(--gerua-800)' }}>
+                    {lang === 'hi' ? 'आपका केस एक पहचाने गए पैटर्न से मेल खाता है' : 'Your case matches a recognised scam pattern'}
+                  </p>
+                  <p style={{ fontSize: 13.5, marginTop: 4, color: 'var(--gerua-800)' }}>
+                    {lang === 'hi' ? data.pattern.title_hi || data.pattern.title : data.pattern.title} — {data.pattern.count_30d} {lang === 'hi' ? 'मिलते-जुलते मामले 30 दिनों में' : 'similar reports in 30 days'}
+                    {data.pattern.top_region ? (lang === 'hi' ? `, सबसे ज़्यादा ${data.pattern.top_region} से` : `, most from ${data.pattern.top_region}`) : ''}. {lang === 'hi' ? 'यह आपकी शिकायत को मज़बूत बनाता है।' : 'This strengthens your complaint.'}
+                  </p>
+                </div>
+                <Link className="btn btn-sm" style={{ background: 'var(--paper)' }} href="/patterns">{lang === 'hi' ? 'पैटर्न देखें' : 'See the pattern'}</Link>
+              </div>
+            )}
+
             {/* timeline */}
             <div>
               <p className="muted" style={{ fontSize: 13, fontWeight: 500 }}>Timeline</p>

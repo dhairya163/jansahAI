@@ -102,6 +102,11 @@ export class VoiceClient {
     if (this.dc?.readyState === 'open') this.dc.send(JSON.stringify(obj));
   }
 
+  /** Pause/resume the caller's mic (human handoff on web keeps the session alive but quiet). */
+  setMuted(muted: boolean): void {
+    this.mic?.getAudioTracks().forEach((t) => { t.enabled = !muted; });
+  }
+
   /** Type-instead panel → announced to the model as a user message (§12.2). */
   typeText(label: string, value: string): void {
     const text = `[user typed the ${label} on screen]: ${value}`;

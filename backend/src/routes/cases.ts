@@ -13,6 +13,7 @@ import { statusLabel, categoryLabel } from '../engine/labels.js';
 import { getPlaybook } from '../engine/playbooks.js';
 import { getGuidanceList, ezeroDynamicLine } from '../engine/guidance/index.js';
 import { ARTIFACT_LABELS } from '../pdf/render.js';
+import { patternForCase } from '../engine/radar.js';
 
 export const casesRouter = Router();
 
@@ -149,6 +150,7 @@ casesRouter.get('/:caseNumber', async (req, res) => {
     })),
     next_clock: nc,
     guidance,
+    pattern: await patternForCase(c.id),
     demo_mode: config.demoMode,
   });
 });

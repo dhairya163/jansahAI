@@ -70,6 +70,30 @@ Either way, two values cross-link the deploys:
 Avoid free tiers that sleep on idle — a cold start mid-voice-demo is fatal. Health check: `GET /health`.
 The database/storage/email stay exactly as configured (Supabase + Resend are already cloud services).
 
+
+## v2 — phone line, human handoff, scam radar
+
+**Phone line ("Call me").** `/call` has a *We call you* card: the citizen enters an Indian mobile number, the
+backend places a Twilio call, and when they answer, TwiML bridges the leg into OpenAI's SIP endpoint
+(`sip:<project>@sip.api.openai.com`). OpenAI fires `realtime.call.incoming` → `POST /api/phone/openai-webhook`
+accepts it with the **same session config the browser uses** and a phone-session runner
+(`backend/src/agent/phoneRunner.ts`) drives the call over `wss://api.openai.com/v1/realtime?call_id=…`,
+executing tool calls through the same `handleTool()`. Captions stream to the web page over the
+`session:{id}` channel. Inbound calls to the Twilio number take the same path.
+Setup: Twilio trial → verify a caller (ops console → Phone line → *Verify caller*) → *Get trial number* →
+set `TWILIO_*`, `OPENAI_PROJECT_ID`, `OPENAI_WEBHOOK_SECRET`, `PUBLIC_API_URL` → register the webhook URL in the
+OpenAI dashboard (Settings → Webhooks → `realtime.call.incoming`).
+
+**Human handoff.** Tool `request_human` (or the *Talk to a human* button) creates a `handoffs` row with an
+AI-written brief; the ops console shows a live queue. Web callers chat on the call page (mic paused);
+on phone calls the operator's typed replies are spoken to the caller by the agent and the caller's
+speech is mirrored into the chat. Platform-only — no call transfer to a personal phone.
+
+**Scam radar (`/patterns`).** Every registered case yields a PII-free signature (LLM), embedded with
+`text-embedding-3-small` and clustered with pgvector into `patterns`; briefs are LLM-written in EN + HI and
+auto-published at 2+ reports. The agent calls `find_similar_cases` once per intake and says one sentence.
+Seed synthetic signals + backfill real cases: `npm run seed:radar`.
+
 ## Tests & QA
 
 ```bash

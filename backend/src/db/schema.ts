@@ -1,5 +1,5 @@
 import {
-  pgTable, uuid, text, boolean, numeric, timestamp, jsonb, integer, index, uniqueIndex,
+  pgTable, uuid, text, boolean, numeric, timestamp, jsonb, integer, index, uniqueIndex, vector,
 } from 'drizzle-orm/pg-core';
 
 export const cases = pgTable('cases', {
@@ -90,6 +90,79 @@ export const voiceSessions = pgTable('voice_sessions', {
   minutes: numeric('minutes'),
   transcript: jsonb('transcript').notNull().default([]),
   toolCalls: jsonb('tool_calls').notNull().default([]),
+  // v2 — phone line
+  channel: text('channel').notNull().default('web'),
+  phoneMasked: text('phone_masked'),
+  phoneE164: text('phone_e164'),
+  callId: text('call_id'),
+  twilioCallSid: text('twilio_call_sid'),
+  callStatus: text('call_status'),
+  consentAt: timestamp('consent_at', { withTimezone: true }),
+});
+
+export const handoffs = pgTable('handoffs', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  sessionId: uuid('session_id').references(() => voiceSessions.id, { onDelete: 'set null' }),
+  caseId: uuid('case_id').references(() => cases.id, { onDelete: 'set null' }),
+  channel: text('channel').notNull(),
+  reason: text('reason'),
+  urgency: text('urgency'),
+  aiSummary: text('ai_summary'),
+  language: text('language'),
+  status: text('status').notNull().default('queued'),
+  assignedTo: text('assigned_to'),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  acceptedAt: timestamp('accepted_at', { withTimezone: true }),
+  closedAt: timestamp('closed_at', { withTimezone: true }),
+});
+
+export const handoffMessages = pgTable('handoff_messages', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  handoffId: uuid('handoff_id').notNull().references(() => handoffs.id, { onDelete: 'cascade' }),
+  sender: text('sender').notNull(),
+  text: text('text').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const patterns = pgTable('patterns', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  modus: text('modus').notNull(),
+  title: text('title').notNull().default(''),
+  brief: text('brief').notNull().default(''),
+  titleHi: text('title_hi').notNull().default(''),
+  briefHi: text('brief_hi').notNull().default(''),
+  guidanceKeys: jsonb('guidance_keys').notNull().default([]),
+  category: text('category'),
+  centroid: vector('centroid', { dimensions: 1536 }),
+  reportCount: integer('report_count').notNull().default(0),
+  count30d: integer('count_30d').notNull().default(0),
+  count7d: integer('count_7d').notNull().default(0),
+  regions: jsonb('regions').notNull().default({}),
+  identifiers: jsonb('identifiers').notNull().default([]),
+  trend: jsonb('trend').notNull().default([]),
+  firstSeen: timestamp('first_seen', { withTimezone: true }).notNull().defaultNow(),
+  lastSeen: timestamp('last_seen', { withTimezone: true }).notNull().defaultNow(),
+  published: boolean('published').notNull().default(false),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const caseSignals = pgTable('case_signals', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  caseId: uuid('case_id').references(() => cases.id, { onDelete: 'cascade' }),
+  patternId: uuid('pattern_id').references(() => patterns.id, { onDelete: 'set null' }),
+  modus: text('modus').notNull(),
+  impersonated: text('impersonated'),
+  personaName: text('persona_name'),
+  channel: text('channel'),
+  region: text('region'),
+  amountBand: text('amount_band'),
+  hooks: jsonb('hooks').notNull().default([]),
+  oneLine: text('one_line').notNull(),
+  category: text('category'),
+  embedding: vector('embedding', { dimensions: 1536 }),
+  reportedAt: timestamp('reported_at', { withTimezone: true }).notNull().defaultNow(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 });
 
 export const emails = pgTable('emails', {
@@ -110,3 +183,6 @@ export type ArtifactRow = typeof artifacts.$inferSelect;
 export type ClockRow = typeof clocks.$inferSelect;
 export type SuspectRow = typeof suspects.$inferSelect;
 export type VoiceSessionRow = typeof voiceSessions.$inferSelect;
+export type HandoffRow = typeof handoffs.$inferSelect;
+export type PatternRow = typeof patterns.$inferSelect;
+export type CaseSignalRow = typeof caseSignals.$inferSelect;

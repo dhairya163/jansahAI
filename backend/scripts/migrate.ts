@@ -8,10 +8,11 @@ import { supabaseAdmin } from '../src/lib/supabase.js';
 const dir = path.dirname(fileURLToPath(import.meta.url));
 
 async function main(): Promise<void> {
-  const ddl = readFileSync(path.join(dir, '..', 'drizzle', '0000_init.sql'), 'utf8');
   const sql = postgres(config.databaseUrl, { max: 1 });
-  console.log('Running DDL (§15, idempotent)…');
-  await sql.unsafe(ddl);
+  for (const file of ['0000_init.sql', '0001_v2.sql']) {
+    console.log(`Running ${file} (idempotent)…`);
+    await sql.unsafe(readFileSync(path.join(dir, '..', 'drizzle', file), 'utf8'));
+  }
   await sql.end();
   console.log('DDL applied.');
 

@@ -10,6 +10,7 @@ import { runHandlers } from './handlers.js';
 import { sendCaseEmail } from '../email/send.js';
 import { broadcast } from '../lib/supabase.js';
 import { and, isNotNull } from 'drizzle-orm';
+import { radarIngest } from './radar.js';
 
 export class RegistrationError extends Error {
   status = 422;
@@ -74,6 +75,7 @@ export async function registerCase(caseRow: CaseRow, opts: { identityVerified: b
       }
       const [c2] = await db.select().from(cases).where(eq(cases.id, caseRow.id));
       if (c2) await sendCaseEmail(c2, 'ack');
+      if (c2) await radarIngest(c2).catch((err) => console.warn('[radar] ingest failed:', (err as Error).message));
     } catch (err) {
       console.error(`[register] background chain failed for ${caseRow.id}:`, err);
     }

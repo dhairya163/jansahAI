@@ -9,6 +9,7 @@
     "start": "tsx src/index.ts",
     "migrate": "tsx scripts/migrate.ts",
     "seed": "tsx scripts/seed.ts",
+    "seed:radar": "tsx scripts/seed-radar.ts",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },

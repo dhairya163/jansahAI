@@ -44,5 +44,15 @@ export const config = {
   maxSessionsPerDay: Number(process.env.MAX_SESSIONS_PER_DAY ?? 50),
   purgeDays: Number(process.env.PURGE_DAYS ?? 7),
 
+  // v2 — phone line (Twilio + OpenAI SIP), radar
+  publicApiUrl: process.env.PUBLIC_API_URL ?? process.env.API_BASE_URL ?? 'http://localhost:4000',
+  twilioAccountSid: process.env.TWILIO_ACCOUNT_SID ?? '',
+  twilioApiKeySid: process.env.TWILIO_API_KEY_SID ?? '',
+  twilioApiKeySecret: process.env.TWILIO_API_KEY_SECRET ?? '',
+  twilioNumber: process.env.TWILIO_NUMBER ?? '',
+  openaiProjectId: process.env.OPENAI_PROJECT_ID ?? '',
+  openaiWebhookSecret: process.env.OPENAI_WEBHOOK_SECRET ?? '',
+  embeddingModel: process.env.EMBEDDING_MODEL ?? 'text-embedding-3-small',
+  radarModel: process.env.RADAR_MODEL ?? process.env.TEXT_MODEL ?? 'gpt-4.1-mini',
   appName: 'Jansah.AI',
 } as const;
