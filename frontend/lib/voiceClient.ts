@@ -24,6 +24,8 @@ export class VoiceClient {
   private pc: RTCPeerConnection | null = null;
   private dc: RTCDataChannel | null = null;
   private userLang: Lang = 'unknown';
+  private responseActive = false;
+  private responseWanted = false;
   private mic: MediaStream | null = null;
   private audioEl: HTMLAudioElement | null = null;
   private session: SessionInfo | null = null;
@@ -110,10 +112,17 @@ export class VoiceClient {
     this.mic?.getAudioTracks().forEach((t) => { t.enabled = !muted; });
   }
 
+  /** Ask for a model turn — deferred until the current one finishes (the API rejects overlapping responses). */
+  private respond(): void {
+    if (this.responseActive) { this.responseWanted = true; return; }
+    this.responseActive = true;
+    this.send({ type: 'response.create' });
+  }
+
   /** Out-of-band context for the model (handoff events, language corrections) — never shown as a caption. */
   note(text: string, respond = true): void {
     this.send({ type: 'conversation.item.create', item: { type: 'message', role: 'system', content: [{ type: 'input_text', text }] } });
-    if (respond) this.send({ type: 'response.create' });
+    if (respond) this.respond();
   }
 
   /** Type-instead panel → announced to the model as a user message (§12.2). */
@@ -123,7 +132,7 @@ export class VoiceClient {
       type: 'conversation.item.create',
       item: { type: 'message', role: 'user', content: [{ type: 'input_text', text }] },
     });
-    this.send({ type: 'response.create' });
+    this.respond();
     this.pushTranscript('user', text);
     this.cb.onCaption({ id: `typed-${Date.now()}`, role: 'user', text, final: true });
   }
@@ -139,6 +148,12 @@ export class VoiceClient {
 
     switch (type) {
       // assistant captions (GA event names)
+      case 'response.created': this.responseActive = true; return;
+      case 'response.done': {
+        this.responseActive = false;
+        if (this.responseWanted) { this.responseWanted = false; this.respond(); }
+        return;
+      }
       case 'response.output_audio_transcript.delta': {
         const id = String(e.item_id ?? e.response_id ?? 'a');
         const cur = (this.assistantPartials.get(id) ?? '') + String(e.delta ?? '');
@@ -193,7 +208,7 @@ export class VoiceClient {
           type: 'conversation.item.create',
           item: { type: 'function_call_output', call_id: callId, output: JSON.stringify(output) },
         });
-        this.send({ type: 'response.create' });
+        this.respond();
         return;
       }
       case 'error':

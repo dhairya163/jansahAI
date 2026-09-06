@@ -28,6 +28,8 @@ export class PhoneRunner {
   private handoffId: string | null = null;
   private humanName = 'the desk';
   private userLang: Lang = 'unknown';
+  private responseActive = false;
+  private responseWanted = false;
 
   constructor(public session: VoiceSessionRow, public callId: string, private greeting: string) {}
 
@@ -43,6 +45,7 @@ export class PhoneRunner {
     this.ws = ws;
     ws.on('open', () => {
       console.log(`[phone] ws open session=${this.session.id.slice(0, 8)} call=${this.callId.slice(0, 12)}`);
+      this.responseActive = true;
       this.send({ type: 'response.create', response: { instructions: this.greeting } });
       this.timer = setTimeout(() => { void this.end('cap'); }, config.maxSessionMinutes * 60_000);
       this.emit('call_status', { status: 'in_progress' });
@@ -54,6 +57,13 @@ export class PhoneRunner {
 
   private send(obj: unknown): void {
     if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify(obj));
+  }
+
+  /** response.create, deferred while a response is in flight (the API rejects overlapping responses). */
+  private respond(): void {
+    if (this.responseActive) { this.responseWanted = true; return; }
+    this.responseActive = true;
+    this.send({ type: 'response.create' });
   }
 
   private emit(event: string, payload: unknown): void {
@@ -111,9 +121,11 @@ export class PhoneRunner {
         if (name === 'find_similar_cases' && output.count_30d !== undefined) this.emit('pattern', output);
       }
       this.send({ type: 'conversation.item.create', item: { type: 'function_call_output', call_id: callId, output: JSON.stringify(output) } });
-      this.send({ type: 'response.create' });
+      this.respond();
       return;
     }
+    if (type === 'response.created') { this.responseActive = true; return; }
+    if (type === 'response.done') { this.responseActive = false; if (this.responseWanted) { this.responseWanted = false; this.respond(); } return; }
     if (type === 'error') console.warn('[phone realtime error]', JSON.stringify(e.error ?? e).slice(0, 300));
   }
 
@@ -135,7 +147,7 @@ export class PhoneRunner {
 
   private inject(text: string): void {
     this.send({ type: 'conversation.item.create', item: { type: 'message', role: 'user', content: [{ type: 'input_text', text }] } });
-    this.send({ type: 'response.create' });
+    this.respond();
   }
 
   private async postHandoffMessage(sender: 'citizen' | 'agent', text: string): Promise<void> {
