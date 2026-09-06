@@ -46,6 +46,7 @@ export const config = {
 
   // v2 — phone line (Twilio + OpenAI SIP), radar
   publicApiUrl: process.env.PUBLIC_API_URL ?? process.env.API_BASE_URL ?? 'http://localhost:4000',
+  telephonyApiBase: (process.env.TELEPHONY_API_BASE ?? 'https://api.twilio.com/2010-04-01').replace(/\/+$/, ''),
   twilioAccountSid: process.env.TWILIO_ACCOUNT_SID ?? '',
   twilioApiKeySid: process.env.TWILIO_API_KEY_SID ?? '',
   twilioApiKeySecret: process.env.TWILIO_API_KEY_SECRET ?? '',

@@ -1,8 +1,13 @@
 import { config } from '../config.js';
 
-/** Twilio REST (no SDK): outbound calls, caller-ID verification, numbers. Auth = API key SID:secret. */
+/**
+ * Telephony REST (no SDK) — Twilio's 2010-04-01 API, which SignalWire's Compatibility API mirrors.
+ * Switch providers with TELEPHONY_API_BASE (default Twilio):
+ *   Twilio     : https://api.twilio.com/2010-04-01            + Account SID / API key SID / secret
+ *   SignalWire : https://<space>.signalwire.com/api/laml/2010-04-01 + Project ID (as both SIDs) / API token
+ */
 
-const base = () => `https://api.twilio.com/2010-04-01/Accounts/${config.twilioAccountSid}`;
+const base = () => `${config.telephonyApiBase}/Accounts/${config.twilioAccountSid}`;
 const authHeader = () =>
   `Basic ${Buffer.from(`${config.twilioApiKeySid}:${config.twilioApiKeySecret}`).toString('base64')}`;
 

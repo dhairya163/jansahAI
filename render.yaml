@@ -68,6 +68,8 @@ services:
       # v2 — phone line (Twilio trial + OpenAI SIP) and scam radar
       - key: PUBLIC_API_URL
         sync: false
+      - key: TELEPHONY_API_BASE
+        value: https://api.twilio.com/2010-04-01
       - key: TWILIO_ACCOUNT_SID
         sync: false
       - key: TWILIO_API_KEY_SID
