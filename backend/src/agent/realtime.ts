@@ -28,7 +28,7 @@ const TRANSCRIBE_PROMPT =
   'Cybercrime complaint call in India. Transcribe in the script of the language actually spoken: ' +
   'English speech in English letters (never transliterate English into Devanagari — "yes", "thank you", "one two three" stay English); ' +
   'Hindi speech in Devanagari (never Urdu/Arabic script); Hinglish with the Hindi words in Devanagari and the English words in English letters. ' +
-  'Also expect Kannada, Tamil, Telugu, Bengali, Punjabi, Marathi in their own scripts. Terms: UPI, OTP, Aadhaar, FIR, KYC, lakh, crore, ₹.';
+  'Punjabi-accented Hindi and words like "haan ji" are Hindi — write them in Devanagari, never Gurmukhi. Only clearly Tamil, Telugu, Kannada, Bengali or Marathi speech goes in its own script. Terms: UPI, OTP, Aadhaar, FIR, KYC, lakh, crore, ₹.';
 
 function nowIST(): string {
   return new Intl.DateTimeFormat('en-IN', {

@@ -25,7 +25,7 @@ export const TOOLS = [
   },
   {
     type: 'function', name: 'send_aadhaar_otp',
-    description: 'Send the mock Aadhaar OTP (appears as an on-screen SMS). Pass the LAST 4 digits only.',
+    description: 'Send the Aadhaar OTP (appears as an on-screen SMS). First collect the caller\'s FULL 12-digit Aadhaar number and read it back; then pass ONLY its last 4 digits here. Never ask the caller for just 4 digits.',
     parameters: {
       type: 'object', required: ['aadhaar_last4'],
       properties: { aadhaar_last4: { type: 'string', pattern: '^[0-9]{4}$' } },

@@ -31,8 +31,6 @@ export function languageNudge(userLang: Lang, assistantLang: Lang): string | nul
   if (userLang === "hi" || userLang === "hinglish") {
     return "[LANGUAGE CHECK: the caller is speaking Hindi but your last reply was in English. From now on reply ONLY in Hindi (natural spoken Hinglish is fine) — every sentence, including short acknowledgements and anything you say around a tool call.]";
   }
-  if (userLang === "indic") {
-    return "[LANGUAGE CHECK: the caller is speaking an Indian language but your last reply was in English. From now on reply only in the caller's language, including short acknowledgements.]";
-  }
+  // "indic" captions are often the transcriber guessing Punjabi/Bengali for accented Hindi — the model hears the audio itself; never push it.
   return null;
 }
