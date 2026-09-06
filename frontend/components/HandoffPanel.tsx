@@ -9,7 +9,7 @@ import { myHandoff, sendHandoffMessage, closeMyHandoff, type HandoffMsg, type Ha
  */
 export function HandoffPanel({ token, handoffId, channel, onStatus }: {
   token: string; handoffId: string; channel: 'web' | 'phone';
-  onStatus?: (status: 'queued' | 'accepted' | 'closed', name?: string | null) => void;
+  onStatus?: (status: 'queued' | 'accepted' | 'closed', name?: string | null, kind?: 'ai' | 'human' | null) => void;
 }) {
   const [summary, setSummary] = useState<HandoffSummary | null>(null);
   const [messages, setMessages] = useState<HandoffMsg[]>([]);
@@ -19,7 +19,7 @@ export function HandoffPanel({ token, handoffId, channel, onStatus }: {
   const load = useCallback(async () => {
     try {
       const d = await myHandoff(token);
-      if (d.handoff) { setSummary(d.handoff); setMessages(d.messages); onStatus?.(d.handoff.status, d.handoff.assigned_to); }
+      if (d.handoff) { setSummary(d.handoff); setMessages(d.messages); onStatus?.(d.handoff.status, d.handoff.assigned_to, d.handoff.operator_kind ?? null); }
     } catch { /* keep last state */ }
   }, [token, onStatus]);
 
@@ -28,7 +28,7 @@ export function HandoffPanel({ token, handoffId, channel, onStatus }: {
     const unsub = subscribeTopic(`handoff:${handoffId}`, (event, payload) => {
       const p = payload as Record<string, unknown>;
       if (event === 'message') setMessages((m) => (m.some((x) => x.id === p.id) ? m : [...m, p as unknown as HandoffMsg]));
-      if (event === 'accepted') { setMessages((m) => [...m, (p.message as HandoffMsg)]); setSummary((s) => (s ? { ...s, status: 'accepted', assigned_to: String(p.name) } : s)); onStatus?.('accepted', String(p.name)); }
+      if (event === 'accepted') { const kind = (p.kind as 'ai' | 'human') ?? 'human'; setMessages((m) => [...m, (p.message as HandoffMsg)]); setSummary((s) => (s ? { ...s, status: 'accepted', assigned_to: String(p.name), operator_kind: kind } : s)); onStatus?.('accepted', String(p.name), kind); }
       if (event === 'closed') { setMessages((m) => [...m, (p.message as HandoffMsg)]); setSummary((s) => (s ? { ...s, status: 'closed' } : s)); onStatus?.('closed'); }
     });
     const iv = setInterval(() => { void load(); }, 6000);
@@ -45,16 +45,18 @@ export function HandoffPanel({ token, handoffId, channel, onStatus }: {
 
   const status = summary?.status ?? 'queued';
   const name = summary?.assigned_to ?? null;
+  const desk = summary?.operator_kind === 'ai';
 
   return (
     <div className="card-tint toast-in" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-3)', flexShrink: 0 }}>
       <div className="callout-neem" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, padding: '8px 12px' }}>
         <span style={{ fontSize: 13 }}>
-          {status === 'queued' && <><b>Connecting you to a person</b> · Jansah desk has your summary{channel === 'web' ? ' · your mic is paused' : ''}</>}
-          {status === 'accepted' && <><b>{name} joined</b> · Jansah desk{channel === 'phone' ? ' · replies are spoken to you on the call' : ' · voice paused'}</>}
+          {status === 'queued' && <><b>Connecting you to a person</b> · Jansah help desk has your summary</>}
+          {status === 'accepted' && desk && <><b>{name} joined</b> · Jansah help desk · on the call with you</>}
+          {status === 'accepted' && !desk && <><b>{name} joined</b> · Jansah desk{channel === 'phone' ? ' · replies are spoken to you on the call' : ' · voice paused'}</>}
           {status === 'closed' && <><b>Conversation with the desk ended</b> · Jansah continues</>}
         </span>
-        <span className={`chip ${status === 'accepted' ? 'chip-neem' : 'chip-line'}`}>{status === 'queued' ? 'waiting…' : status === 'accepted' ? 'human' : 'closed'}</span>
+        <span className={`chip ${status === 'accepted' ? 'chip-neem' : 'chip-line'}`}>{status === 'queued' ? 'connecting…' : status === 'accepted' ? (desk ? 'help desk' : 'human') : 'closed'}</span>
       </div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 240, overflowY: 'auto' }}>
         {messages.map((m) => (
@@ -63,10 +65,11 @@ export function HandoffPanel({ token, handoffId, channel, onStatus }: {
             {m.sender === 'human' && <b>{m.name ?? name ?? 'Desk'}: </b>}{m.text}
           </div>
         ))}
-        {messages.length === 0 && <p className="faint" style={{ fontSize: 13 }}>A person from the desk will pick this up shortly. You can keep talking to Jansah meanwhile.</p>}
+        {messages.length === 0 && <p className="faint" style={{ fontSize: 13 }}>A person from the help desk will join in a moment. You can keep talking meanwhile.</p>}
+        {desk && status === 'accepted' && <p className="faint" style={{ fontSize: 12.5 }}>{name} talks to you {channel === 'phone' ? 'on the call' : 'by voice — keep speaking, or use “Type instead”'}.</p>}
         <div ref={endRef} />
       </div>
-      {channel === 'web' && status !== 'closed' && (
+      {channel === 'web' && status !== 'closed' && !desk && (
         <div style={{ display: 'flex', gap: 'var(--sp-2)' }}>
           <input className="input" style={{ minHeight: 42 }} placeholder={status === 'accepted' ? `Message ${name ?? 'the desk'}…` : 'Type a message for the desk…'}
             value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') void send(); }} />

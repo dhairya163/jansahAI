@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { VoiceClient, type CaptionLine, type VoiceState } from '@/lib/voiceClient';
+import { deskPersonaNote, deskLeftNote, humanJoinedNote } from '@/lib/deskPersona';
 import { fetchCase, artifactUrl, fmtCase, callMe, phoneInfo, phoneSession, requestHandoffApi, type CasePayload } from '@/lib/api';
 import { subscribeTopic } from '@/lib/supabaseClient';
 import { MicIcon, BrandRow, JansahMark, LoadingLoop } from '@/components/chrome';
@@ -22,7 +23,7 @@ interface SlotView {
   suspect?: { value: string; matches: number }; flash: string[];
 }
 interface PatternHit { pattern_title: string; count_30d: number; top_regions: { region: string; count: number }[] }
-interface HandoffState { id: string; status: 'queued' | 'accepted' | 'closed'; name?: string | null }
+interface HandoffState { id: string; status: 'queued' | 'accepted' | 'closed'; name?: string | null; kind?: 'ai' | 'human' | null }
 
 const SLOT_LABELS: Record<string, string> = {
   amount: 'Amount lost', txns: 'Transactions', payee_identifier: 'Payee', own_bank: 'Your bank',
@@ -106,9 +107,12 @@ export default function CallPage() {
     setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id || x.pinned)), 7000);
   }, []);
 
-  const upsertCaption = useCallback((line: CaptionLine) => setCaptions((prev) => {
+  const handoffRef = useRef<HandoffState | null>(null);
+  const upsertCaption = useCallback((raw: CaptionLine) => setCaptions((prev) => {
+    const desk = handoffRef.current;
+    const line = raw.role === 'assistant' && desk?.status === 'accepted' && desk.kind === 'ai' && desk.name ? { ...raw, speaker: desk.name } : raw;
     const idx = prev.findIndex((c) => c.id === line.id && c.role === line.role);
-    if (idx >= 0) { const next = [...prev]; next[idx] = line; return next; }
+    if (idx >= 0) { const next = [...prev]; next[idx] = { ...line, speaker: line.speaker ?? next[idx].speaker }; return next; }
     return [...prev, line];
   }), []);
 
@@ -135,7 +139,7 @@ export default function CallPage() {
       case 'pattern': if (Number(p.count_30d ?? 0) > 0) setPattern({ pattern_title: String(p.pattern_title ?? ''), count_30d: Number(p.count_30d), top_regions: (p.top_regions as PatternHit['top_regions']) ?? [] }); break;
       case 'registered': setResult({ caseNumber: String(p.case_number), caseToken: String(p.case_token ?? '') }); break;
       case 'call_status': setPhoneStatus(String(p.status ?? '')); break;
-      case 'handoff': setHandoff({ id: String(p.id), status: p.status as HandoffState['status'], name: (p.name as string) ?? null }); break;
+      case 'handoff': setHandoff({ id: String(p.id), status: p.status as HandoffState['status'], name: (p.name as string) ?? null, kind: (p.kind as HandoffState['kind']) ?? null }); break;
       default: break;
     }
   }, [pushToast, upsertCaption]);
@@ -208,7 +212,7 @@ export default function CallPage() {
         if (stop) return;
         if (s.status) setPhoneStatus(s.status);
         if (s.case_number && s.case_token) setResult((r) => r ?? { caseNumber: s.case_number!, caseToken: s.case_token! });
-        if (s.handoff) setHandoff((h) => (h && h.id === s.handoff!.id ? h : { id: s.handoff!.id, status: s.handoff!.status as HandoffState['status'], name: s.handoff!.assigned_to }));
+        if (s.handoff) setHandoff((h) => (h && h.id === s.handoff!.id ? h : { id: s.handoff!.id, status: s.handoff!.status as HandoffState['status'], name: s.handoff!.assigned_to, kind: s.handoff!.operator_kind ?? null }));
       } catch { /* keep */ }
       if (!stop) setTimeout(poll, 4000);
     };
@@ -221,14 +225,21 @@ export default function CallPage() {
 
   // handoff → mute mic on web while a human is chatting
   useEffect(() => {
+    const prevKind = handoffRef.current?.kind ?? null; const prevName = handoffRef.current?.name ?? null;
+    handoffRef.current = handoff;
     if (mode !== 'web') return;
-    clientRef.current?.setMuted(handoff?.status === 'accepted');
-    const key = handoff ? `${handoff.id}:${handoff.status}` : '';
+    const human = handoff?.status === 'accepted' && handoff.kind === 'human';
+    clientRef.current?.setMuted(human);
+    const key = handoff ? `${handoff.id}:${handoff.status}:${handoff.kind ?? ''}` : '';
     if (!handoff || announcedRef.current === key) return;
     announcedRef.current = key;
-    if (handoff.status === 'accepted') clientRef.current?.note(`[Operator ${handoff.name ?? 'from the Jansah desk'} has joined and is typing on the caller's screen. Say ONE short line in the caller's language: the operator is here now, please read and reply on the screen. Then stay silent until the operator leaves.]`);
-    if (handoff.status === 'closed') clientRef.current?.note('[The desk operator has left the conversation. Thank the caller in ONE short line, in their language, and continue the intake from where it stopped.]');
-  }, [handoff?.status, mode]);
+    if (handoff.status === 'accepted') {
+      clientRef.current?.note(handoff.kind === 'ai' ? deskPersonaNote(handoff.name ?? 'Priya') : humanJoinedNote(handoff.name ?? 'the desk officer'));
+    }
+    if (handoff.status === 'closed') {
+      clientRef.current?.note(prevKind === 'ai' ? deskLeftNote(prevName ?? 'The desk operator') : '[The desk operator has left the conversation. Thank the caller in ONE short line, in their language, and continue the intake from where it stopped.]');
+    }
+  }, [handoff, mode]);
 
   // ended: fetch artifacts as the background immediates finish
   const ended = (mode === 'web' && state === 'ended') || (mode === 'phone' && ['completed', 'busy', 'no-answer', 'failed', 'canceled'].includes(phoneStatus));
@@ -461,7 +472,7 @@ export default function CallPage() {
           <div style={{ flex: 'none', display: 'flex', alignItems: 'center', gap: 10, marginBottom: 'var(--sp-3)', flexWrap: 'wrap' }}>
             <span className="pulse" style={{ width: 10, height: 10, borderRadius: '50%', background: handoff?.status === 'accepted' ? 'var(--haldi-600)' : 'var(--neem-600)' }} />
             <span className="muted" style={{ fontSize: 14 }}>
-              {handoff?.status === 'accepted' ? `${handoff.name ?? 'Desk'} is with you · voice paused` : activeTool ? `Working… (${activeTool})` : phoneLive ? (ringing ? 'Pick up your phone — the transcript appears here' : 'Listening on the phone · किसी भी भाषा में') : 'Listening — speak in any language · किसी भी भाषा में'}
+              {handoff?.status === 'accepted' ? (handoff.kind === 'ai' ? `${handoff.name ?? 'Desk'} from the help desk is on the call` : `${handoff.name ?? 'Desk'} is with you · voice paused`) : activeTool ? `Working… (${activeTool})` : phoneLive ? (ringing ? 'Pick up your phone — the transcript appears here' : 'Listening on the phone · किसी भी भाषा में') : 'Listening — speak in any language · किसी भी भाषा में'}
             </span>
             <span style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
               {!phoneLive && <button className="chip chip-line" onClick={() => setTypeOpen((o) => !o)}>⌨ Type instead</button>}
@@ -485,7 +496,7 @@ export default function CallPage() {
             onScroll={(e) => { const el = e.currentTarget; nearBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 120; }}
             style={{ flex: 1, minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain', display: 'flex', flexDirection: 'column', gap: 'var(--sp-3)', paddingRight: 6, paddingBottom: 'var(--sp-2)', scrollBehavior: 'smooth' }}>
             {captions.map((c2) => (
-              <div key={`${c2.role}-${c2.id}`} className={`bubble ${c2.role === 'assistant' ? 'bubble-a' : 'bubble-u'}`} style={{ opacity: c2.final ? 1 : 0.75, maxWidth: '78%', flex: 'none' }}>{c2.text}</div>
+              <div key={`${c2.role}-${c2.id}`} className={`bubble ${c2.role === 'assistant' ? (c2.speaker ? 'bubble-h' : 'bubble-a') : 'bubble-u'}`} style={{ opacity: c2.final ? 1 : 0.75, maxWidth: '78%', flex: 'none' }}>{c2.speaker && <b>{c2.speaker}: </b>}{c2.text}</div>
             ))}
             {captions.length === 0 && (
               <p className="faint" style={{ fontSize: 13.5 }}>{phoneLive ? (ringing ? 'Your phone is ringing…' : 'Say hello on the phone — captions will appear here.') : 'Say hello — Jansah will greet you and ask what happened.'}</p>
@@ -508,7 +519,7 @@ export default function CallPage() {
               </div>
             ) : (
               <HandoffPanel token={sessionToken} handoffId={handoff.id} channel={phoneLive ? 'phone' : 'web'}
-                onStatus={(status, name) => setHandoff((h) => (h ? { ...h, status, name: name ?? h.name } : h))} />
+                onStatus={(status, name, kind) => setHandoff((h) => (h ? { ...h, status, name: name ?? h.name, kind: kind ?? h.kind } : h))} />
             )
           )}
 

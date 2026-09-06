@@ -8,7 +8,7 @@ import { createVoiceSession, endVoiceSession, callTool, type SessionInfo } from 
 
 export type VoiceState = 'idle' | 'connecting' | 'live' | 'ended' | 'error';
 
-export interface CaptionLine { id: string; role: 'user' | 'assistant'; text: string; final: boolean }
+export interface CaptionLine { id: string; role: 'user' | 'assistant'; text: string; final: boolean; speaker?: string | null }
 
 export interface VoiceCallbacks {
   onState: (s: VoiceState, detail?: string) => void;

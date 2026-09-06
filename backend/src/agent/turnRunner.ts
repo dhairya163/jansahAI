@@ -9,6 +9,7 @@ import { broadcast } from '../lib/supabase.js';
 import { redact, redactDeep } from '../lib/redact.js';
 import { twilioHangup } from '../lib/twilio.js';
 import { detectLang, updateLang, languageNudge, type Lang } from '../lib/lang.js';
+import { deskPersonaNote, deskLeftNote, humanJoinedNote } from './deskPersona.js';
 
 /**
  * Trial-safe phone bridge — Twilio trials strip <Dial><Sip>, so instead of streaming audio to the
@@ -56,6 +57,7 @@ export class TurnRunner {
   private pending: Promise<TurnResult> | null = null;
   private waits = 0;
   private userLang: Lang = 'unknown';
+  private deskAi = false;
 
   constructor(public session: VoiceSessionRow, public callSid: string | null, extraInstructions: string) {
     const sc = buildSessionConfig(`${extraInstructions}\n\n${PHONE_TEXT_RULES}`);
@@ -172,16 +174,20 @@ export class TurnRunner {
 
   // ── human handoff relay: notes are spoken on the caller's next turn (Gather polls every few seconds) ──
   setHandoff(id: string | null): void { this.handoffId = id; }
-  announceHuman(name: string): void {
+  announceHuman(name: string, kind: 'ai' | 'human' = 'human'): void {
     this.humanName = name;
-    this.notes.push(`[A human operator named ${name} has joined from the Jansah desk. Tell the caller, in their language, that ${name} is now with them and will speak through you. From now on: relay each operator message faithfully, then wait for the caller's reply. Ask no new intake questions of your own until the operator leaves.]`);
+    this.deskAi = kind === 'ai';
+    this.notes.push(kind === 'ai' ? deskPersonaNote(name) : humanJoinedNote(name, 'phone'));
   }
   relayHuman(text: string, name = this.humanName): void {
     this.notes.push(`[OPERATOR ${name} SAYS — say this to the caller in their language, faithfully and warmly, then wait]: ${text}`);
   }
-  humanLeft(): void {
-    this.notes.push(`[Operator ${this.humanName} has left the conversation. Thank the caller briefly and continue the intake from where it stopped.]`);
+  humanLeft(deskName?: string): void {
+    this.deskAi = false;
+    this.notes.push(deskName ? deskLeftNote(deskName) : `[Operator ${this.humanName} has left the conversation. Thank the caller briefly and continue the intake from where it stopped.]`);
   }
+  /** The desk persona gets its own voice on the phone loop. */
+  get ttsVoice(): string { return this.deskAi ? config.phoneTtsVoiceDesk : config.phoneTtsVoice; }
   private async postHandoffMessage(sender: 'citizen' | 'agent', text: string): Promise<void> {
     if (!this.handoffId) return;
     const [row] = await db.insert(handoffMessages).values({ handoffId: this.handoffId, sender, text: redact(text) }).returning();

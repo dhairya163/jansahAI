@@ -25,9 +25,10 @@ export const sipUri = () => `sip:${config.openaiProjectId}@sip.api.openai.com;tr
  * heavy prompt biases the ASR toward Devanagari/Latin output without forcing a language.
  */
 const TRANSCRIBE_PROMPT =
-  'भारत में साइबर-अपराध शिकायत की बातचीत। हिंदी को हमेशा देवनागरी में लिखें, कभी उर्दू/अरबी लिपि में नहीं। ' +
-  'Hinglish stays in Latin script; English stays English. Expect Hindi, English, Hinglish, ' +
-  'Kannada, Tamil, Telugu, Bengali, Punjabi, Marathi. Terms: UPI, OTP, Aadhaar, FIR, lakh, crore, paisa, ₹.';
+  'Cybercrime complaint call in India. Transcribe in the script of the language actually spoken: ' +
+  'English speech in English letters (never transliterate English into Devanagari — "yes", "thank you", "one two three" stay English); ' +
+  'Hindi speech in Devanagari (never Urdu/Arabic script); Hinglish with the Hindi words in Devanagari and the English words in English letters. ' +
+  'Also expect Kannada, Tamil, Telugu, Bengali, Punjabi, Marathi in their own scripts. Terms: UPI, OTP, Aadhaar, FIR, KYC, lakh, crore, ₹.';
 
 function nowIST(): string {
   return new Intl.DateTimeFormat('en-IN', {

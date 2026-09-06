@@ -8,6 +8,7 @@ import { handleTool, ToolError } from './toolHandlers.js';
 import { broadcast } from '../lib/supabase.js';
 import { redact, redactDeep } from '../lib/redact.js';
 import { detectLang, updateLang, languageNudge, type Lang } from '../lib/lang.js';
+import { deskPersonaNote, deskLeftNote, humanJoinedNote } from './deskPersona.js';
 
 /**
  * Phone session runner — does for a SIP call what the browser does for a WebRTC call:
@@ -119,17 +120,17 @@ export class PhoneRunner {
   // ── human handoff relay (operator types on the platform; the agent speaks it) ──
   setHandoff(id: string | null): void { this.handoffId = id; }
 
-  announceHuman(name: string): void {
+  announceHuman(name: string, kind: 'ai' | 'human' = 'human'): void {
     this.humanName = name;
-    this.inject(`[A human operator named ${name} has joined from the Jansah desk. Tell the caller, in their language, that ${name} is now with them and will speak through you. From now on: relay each operator message faithfully, then wait for the caller's reply. Ask no new intake questions of your own until the operator leaves.]`);
+    this.inject(kind === 'ai' ? deskPersonaNote(name) : humanJoinedNote(name, 'phone'));
   }
 
   relayHuman(text: string, name = this.humanName): void {
     this.inject(`[OPERATOR ${name} SAYS — say this to the caller in their language, faithfully and warmly, then wait]: ${text}`);
   }
 
-  humanLeft(): void {
-    this.inject(`[Operator ${this.humanName} has left the conversation. Thank the caller briefly and continue the intake from where it stopped.]`);
+  humanLeft(deskName?: string): void {
+    this.inject(deskName ? deskLeftNote(deskName) : `[Operator ${this.humanName} has left the conversation. Thank the caller briefly and continue the intake from where it stopped.]`);
   }
 
   private inject(text: string): void {

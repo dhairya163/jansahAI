@@ -125,7 +125,7 @@ export function fmtINR(n: number | null | undefined): string {
 export interface PhoneSession {
   session_id: string; status: string | null; phone_masked: string | null; ended_at: string | null;
   case_number: string | null; case_token: string | null;
-  handoff: { id: string; status: string; assigned_to: string | null } | null;
+  handoff: { id: string; status: string; assigned_to: string | null; operator_kind?: 'ai' | 'human' } | null;
 }
 export const phoneInfo = () => request<{ available: boolean; number: string | null; reason: string | null }>('/api/phone/info');
 export const callMe = (phone: string) =>
@@ -138,7 +138,7 @@ export const phoneSession = (token: string) => request<PhoneSession>('/api/phone
 export interface HandoffMsg { id: string; sender: 'citizen' | 'human' | 'agent' | 'system'; text: string; at: string; name?: string }
 export interface HandoffSummary {
   id: string; status: 'queued' | 'accepted' | 'closed'; channel: 'web' | 'phone'; reason: string | null; urgency: string | null;
-  ai_summary: string | null; language: string | null; assigned_to: string | null; created_at: string; accepted_at: string | null;
+  ai_summary: string | null; language: string | null; assigned_to: string | null; operator_kind?: 'ai' | 'human'; created_at: string; accepted_at: string | null;
   case_number: string | null; case_id: string | null; category: string | null; reporter: string | null; phone_masked: string | null;
 }
 const sessionHeaders = (token: string) => ({ 'X-Session-Token': token });

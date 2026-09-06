@@ -102,7 +102,9 @@ export function HandoffQueue({ auth }: { auth: string }) {
               <div style={{ display: 'flex', flexDirection: 'column', gap: 6, flex: 'none' }}>
                 {h.status === 'queued'
                   ? <button className="btn btn-sm btn-primary" style={{ minHeight: 36 }} onClick={() => void accept(h.id)}>{h.channel === 'phone' ? 'Take the call' : 'Accept · chat'}</button>
-                  : <button className="btn btn-sm" onClick={() => setOpen(open === h.id ? null : h.id)}>{open === h.id ? 'Hide chat' : `Chat · ${h.assigned_to}`}</button>}
+                  : h.operator_kind === 'ai'
+                    ? <button className="btn btn-sm btn-primary" style={{ minHeight: 36 }} title={`${h.assigned_to} (AI desk persona) is on the call — take over as a human`} onClick={() => void accept(h.id)}>Take over from {h.assigned_to} (AI)</button>
+                    : <button className="btn btn-sm" onClick={() => setOpen(open === h.id ? null : h.id)}>{open === h.id ? 'Hide chat' : `Chat · ${h.assigned_to}`}</button>}
                 <button className="btn btn-sm" style={{ color: 'var(--gerua-800)' }} onClick={() => void close(h.id)}>Close</button>
               </div>
             </div>

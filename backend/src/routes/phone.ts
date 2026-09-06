@@ -1,6 +1,6 @@
 import { Router, type Request, type Response } from 'express';
 import crypto from 'node:crypto';
-import { and, desc, eq, gte, inArray, sql as dsql } from 'drizzle-orm';
+import { and, desc, eq, gte, inArray, lt, sql as dsql } from 'drizzle-orm';
 import { db } from '../db/client.js';
 import { voiceSessions, cases, handoffs } from '../db/schema.js';
 import { config } from '../config.js';
@@ -42,14 +42,14 @@ async function bridgeMode(): Promise<'sip' | 'twiml'> {
 }
 
 const xml = (t: string) => t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-const say = (t: string) => `<Say voice="${config.phoneTtsVoice}" language="${config.phoneTtsLang}">${xml(t)}</Say>`;
+const say = (t: string, voice = config.phoneTtsVoice) => `<Say voice="${voice}" language="${config.phoneTtsLang}">${xml(t)}</Say>`;
 const turnUrl = (sessionId: string, path = 'turn') => `${config.publicApiUrl}/api/phone/${path}?s=${sessionId}&t=${sig(sessionId)}`;
 const HINTS = 'UPI, OTP, Aadhaar, KYC, SBI, HDFC, ICICI, Paytm, PhonePe, Google Pay, lakh, rupees, FIR, WhatsApp, Instagram, Telegram';
 /** Speak, then listen: Twilio transcribes the caller and POSTs SpeechResult to /turn. */
-const gatherTwiml = (sessionId: string, text: string) =>
+const gatherTwiml = (sessionId: string, text: string, voice?: string) =>
   `<?xml version="1.0" encoding="UTF-8"?><Response><Gather input="speech" language="${config.phoneSttLang}" speechModel="${config.phoneSttModel}" ` +
-  `speechTimeout="auto" timeout="6" actionOnEmptyResult="true" hints="${xml(HINTS)}" action="${xml(turnUrl(sessionId))}" method="POST">${say(text)}</Gather></Response>`;
-const byeTwiml = (text: string) => `<?xml version="1.0" encoding="UTF-8"?><Response>${say(text)}<Hangup/></Response>`;
+  `speechTimeout="auto" timeout="6" actionOnEmptyResult="true" hints="${xml(HINTS)}" action="${xml(turnUrl(sessionId))}" method="POST">${say(text, voice)}</Gather></Response>`;
+const byeTwiml = (text: string, voice?: string) => `<?xml version="1.0" encoding="UTF-8"?><Response>${say(text, voice)}<Hangup/></Response>`;
 /** The model is still working: a short filler (first time) or a beat of silence, then poll /turn-result again. */
 const waitTwiml = (sessionId: string, first: boolean) =>
   `<?xml version="1.0" encoding="UTF-8"?><Response>${first ? say('जी, एक पल।') : '<Pause length="1"/>'}<Redirect method="POST">${xml(turnUrl(sessionId, 'turn-result'))}</Redirect></Response>`;
@@ -78,7 +78,7 @@ async function closeOrphan(sessionId: string, reason: string): Promise<void> {
 async function sweepOrphans(): Promise<void> {
   const stale = new Date(Date.now() - (config.maxSessionMinutes + 2) * 60_000);
   const rows = await db.select({ id: voiceSessions.id }).from(voiceSessions)
-    .where(and(eq(voiceSessions.channel, 'phone'), inArray(voiceSessions.callStatus, LIVE), dsql`${voiceSessions.startedAt} < ${stale}`));
+    .where(and(eq(voiceSessions.channel, 'phone'), inArray(voiceSessions.callStatus, LIVE), lt(voiceSessions.startedAt, stale)));
   for (const r of rows) if (!phoneRunnerFor(r.id)) await closeOrphan(r.id, 'stale');
 }
 setInterval(() => { void sweepOrphans().catch((e) => console.warn('[phone] sweep:', (e as Error).message)); }, 60_000).unref();
@@ -183,8 +183,8 @@ const TERMINAL = ['completed', 'busy', 'no-answer', 'failed', 'canceled'];
 /** Trial bridge: Twilio posts what the caller said (SpeechResult); we answer with the next thing to say. */
 async function respondTurn(res: Response, sessionId: string, runner: TurnRunner, result: { say: string; end: boolean } | null): Promise<void> {
   if (!result) { res.type('text/xml').send(waitTwiml(sessionId, runner.waitCount === 1)); return; }
-  if (result.end) { res.type('text/xml').send(byeTwiml(result.say)); void runner.end('agent_end'); return; }
-  res.type('text/xml').send(gatherTwiml(sessionId, result.say));
+  if (result.end) { res.type('text/xml').send(byeTwiml(result.say, runner.ttsVoice)); void runner.end('agent_end'); return; }
+  res.type('text/xml').send(gatherTwiml(sessionId, result.say, runner.ttsVoice));
 }
 
 phoneRouter.post('/turn', async (req, res) => {

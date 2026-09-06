@@ -9,7 +9,7 @@ const dir = path.dirname(fileURLToPath(import.meta.url));
 
 async function main(): Promise<void> {
   const sql = postgres(config.databaseUrl, { max: 1 });
-  for (const file of ['0000_init.sql', '0001_v2.sql']) {
+  for (const file of ['0000_init.sql', '0001_v2.sql', '0002_v3.sql']) {
     console.log(`Running ${file} (idempotent)…`);
     await sql.unsafe(readFileSync(path.join(dir, '..', 'drizzle', file), 'utf8'));
   }

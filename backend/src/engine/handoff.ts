@@ -8,6 +8,8 @@ import { categoryLabel } from './labels.js';
 import { formatINR } from '../lib/normalize.js';
 import { chatJson } from '../agent/realtime.js';
 import { phoneRunnerFor } from '../agent/turnRunner.js';
+import { pickDeskName } from '../agent/deskPersona.js';
+import { config } from '../config.js';
 
 /**
  * Human handoff — platform-only: the operator works from the ops console. On web calls the
@@ -61,6 +63,10 @@ export async function requestHandoff(opts: {
 
   // richer brief in the background (never on the tool's latency path)
   setImmediate(() => { void writeBrief(row.id, opts.caseRow, opts.reason); });
+  // simulated help desk: a named operator persona joins shortly (a real operator can take over from the console)
+  if (config.handoffMockDesk) {
+    setTimeout(() => { void acceptHandoff(row.id, pickDeskName(), 'ai').catch((e) => console.warn('[handoff] mock desk:', (e as Error).message)); }, config.handoffMockDelayMs);
+  }
   return { handoff: row, already: false };
 }
 
@@ -84,17 +90,24 @@ async function writeBrief(handoffId: string, c: CaseRow | null, reason?: string)
   } catch (err) { console.warn('[handoff] brief failed:', (err as Error).message); }
 }
 
-export async function acceptHandoff(id: string, name: string): Promise<HandoffRow> {
-  const [row] = await db.update(handoffs).set({ status: 'accepted', assignedTo: name, acceptedAt: new Date() })
+export type OperatorKind = 'ai' | 'human';
+
+/** Accept a queued handoff — or, for a human operator, take over from the simulated desk persona. */
+export async function acceptHandoff(id: string, name: string, kind: OperatorKind = 'human'): Promise<HandoffRow> {
+  const [cur] = await db.select().from(handoffs).where(eq(handoffs.id, id));
+  if (!cur) throw new Error('handoff not found');
+  const takeover = cur.status === 'accepted' && cur.operatorKind === 'ai' && kind === 'human';
+  if (cur.status !== 'queued' && !takeover) throw new Error(cur.status === 'closed' ? 'handoff closed' : 'handoff already taken');
+  const [row] = await db.update(handoffs).set({ status: 'accepted', assignedTo: name, operatorKind: kind, acceptedAt: cur.acceptedAt ?? new Date() })
     .where(eq(handoffs.id, id)).returning();
-  if (!row) throw new Error('handoff not found');
-  const [sys] = await db.insert(handoffMessages).values({ handoffId: id, sender: 'system', text: `${name} joined from the desk` }).returning();
-  void broadcast(`handoff:${id}`, 'accepted', { name, message: { id: sys.id, sender: 'system', text: sys.text, at: sys.createdAt } });
+  const text = kind === 'ai' ? `${name} from the Jansah help desk has joined` : takeover ? `${name} (desk officer) has taken over` : `${name} joined from the desk`;
+  const [sys] = await db.insert(handoffMessages).values({ handoffId: id, sender: 'system', text }).returning();
+  void broadcast(`handoff:${id}`, 'accepted', { name, kind, message: { id: sys.id, sender: 'system', text: sys.text, at: sys.createdAt } });
   if (row.sessionId) {
-    void broadcast(`session:${row.sessionId}`, 'handoff', { id, status: 'accepted', name });
-    phoneRunnerFor(row.sessionId)?.announceHuman(name);
+    void broadcast(`session:${row.sessionId}`, 'handoff', { id, status: 'accepted', name, kind });
+    phoneRunnerFor(row.sessionId)?.announceHuman(name, kind);
   }
-  if (row.caseId) await addEvent(row.caseId, 'handoff_accepted', 'ops', { name });
+  if (row.caseId) await addEvent(row.caseId, 'handoff_accepted', kind === 'ai' ? 'system' : 'ops', { name, kind });
   void broadcast(OPS_TOPIC, 'handoff_updated', await summarize(row));
   return row;
 }
@@ -118,11 +131,12 @@ export async function closeHandoff(id: string, by: 'ops' | 'citizen' = 'ops'): P
   const [row] = await db.update(handoffs).set({ status: 'closed', closedAt: new Date() }).where(eq(handoffs.id, id)).returning();
   if (!row) return;
   const [sys] = await db.insert(handoffMessages).values({ handoffId: id, sender: 'system', text: `Conversation closed by ${by === 'ops' ? (row.assignedTo ?? 'the desk') : 'the citizen'}` }).returning();
+  const runnerKind = row.operatorKind;
   void broadcast(`handoff:${id}`, 'closed', { message: { id: sys.id, sender: 'system', text: sys.text, at: sys.createdAt } });
   if (row.sessionId) {
     void broadcast(`session:${row.sessionId}`, 'handoff', { id, status: 'closed' });
     const runner = phoneRunnerFor(row.sessionId);
-    if (runner) { runner.humanLeft(); runner.setHandoff(null); }
+    if (runner) { runner.humanLeft(runnerKind === 'ai' ? (row.assignedTo ?? 'the desk') : undefined); runner.setHandoff(null); }
   }
   if (row.caseId) await addEvent(row.caseId, 'handoff_closed', by === 'ops' ? 'ops' : 'citizen', {});
   void broadcast(OPS_TOPIC, 'handoff_updated', await summarize(row));
@@ -130,7 +144,7 @@ export async function closeHandoff(id: string, by: 'ops' | 'citizen' = 'ops'): P
 
 export interface HandoffSummary {
   id: string; status: string; channel: string; reason: string | null; urgency: string | null;
-  ai_summary: string | null; language: string | null; assigned_to: string | null;
+  ai_summary: string | null; language: string | null; assigned_to: string | null; operator_kind: string;
   created_at: Date; accepted_at: Date | null;
   case_number: string | null; case_id: string | null; category: string | null; reporter: string | null;
   phone_masked: string | null;
@@ -141,7 +155,7 @@ export async function summarize(row: HandoffRow): Promise<HandoffSummary> {
   const [s] = row.sessionId ? await db.select().from(voiceSessions).where(eq(voiceSessions.id, row.sessionId)) : [];
   return {
     id: row.id, status: row.status, channel: row.channel, reason: row.reason, urgency: row.urgency,
-    ai_summary: row.aiSummary, language: row.language, assigned_to: row.assignedTo,
+    ai_summary: row.aiSummary, language: row.language, assigned_to: row.assignedTo, operator_kind: row.operatorKind,
     created_at: row.createdAt, accepted_at: row.acceptedAt,
     case_number: c && c.status !== 'draft' ? c.caseNumber : null, case_id: c?.id ?? null,
     category: c ? categoryLabel(c.category).en : null,

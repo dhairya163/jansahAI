@@ -111,6 +111,7 @@ export const handoffs = pgTable('handoffs', {
   language: text('language'),
   status: text('status').notNull().default('queued'),
   assignedTo: text('assigned_to'),
+  operatorKind: text('operator_kind').notNull().default('human'),   // 'ai' = simulated desk persona
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   acceptedAt: timestamp('accepted_at', { withTimezone: true }),
   closedAt: timestamp('closed_at', { withTimezone: true }),

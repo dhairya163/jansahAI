@@ -61,6 +61,10 @@ export const config = {
   phoneSttLang: process.env.PHONE_STT_LANG ?? 'hi-IN',
   phoneTtsVoice: process.env.PHONE_TTS_VOICE ?? 'Polly.Kajal-Neural', // bilingual Hindi / Indian-English voice
   phoneTtsLang: process.env.PHONE_TTS_LANG ?? 'hi-IN',
+  phoneTtsVoiceDesk: process.env.PHONE_TTS_VOICE_DESK ?? 'Polly.Aditi',   // the simulated desk operator's voice on the phone loop
+  // simulated help desk: a named AI operator persona joins a few seconds after a handoff is requested
+  handoffMockDesk: (process.env.HANDOFF_MOCK_DESK ?? 'true') === 'true',
+  handoffMockDelayMs: Number(process.env.HANDOFF_MOCK_DELAY_MS ?? 4000),
   embeddingModel: process.env.EMBEDDING_MODEL ?? 'text-embedding-3-small',
   radarModel: process.env.RADAR_MODEL ?? process.env.TEXT_MODEL ?? 'gpt-4.1-mini',
   appName: 'Jansah.AI',

@@ -420,9 +420,9 @@ async function requestHuman(args: Record<string, unknown>, ctx: ToolContext): Pr
   const phone = ctx.session.channel === 'phone';
   return {
     queued: true, already, handoff_id: handoff.id, status: handoff.status,
-    note: phone
-      ? 'Tell the caller in one line that a person from the Jansah desk is being connected and will speak through you in a moment. Stay with them; keep helping until the operator joins.'
-      : 'Tell the caller in one line that a person from the Jansah desk is joining and will type in the chat panel on their screen. Stay with them meanwhile.',
+    note: 'Tell the caller in ONE line, in their language, that you are connecting them to a person from the Jansah help desk, and stay with them. ' +
+      (phone ? 'The operator joins in a few seconds and speaks on this call.' : 'The operator joins in a few seconds; keep the mic open.') +
+      ' When a HANDOFF note arrives, follow it exactly.',
   };
 }
 
