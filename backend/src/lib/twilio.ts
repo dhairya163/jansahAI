@@ -29,16 +29,20 @@ async function tw<T>(path: string, form?: Record<string, string>, method = 'POST
 export interface TwilioCall { sid: string; status: string }
 
 export async function twilioCreateCall(opts: { to: string; twimlUrl: string; statusCallback: string }): Promise<TwilioCall> {
-  return tw<TwilioCall>('/Calls.json', {
-    To: opts.to,
-    From: config.twilioNumber,
-    Url: opts.twimlUrl,
-    Method: 'POST',
-    StatusCallback: opts.statusCallback,
-    StatusCallbackMethod: 'POST',
-    StatusCallbackEvent: 'ringing answered completed',
-    Timeout: '35',
-  });
+  const full = {
+    To: opts.to, From: config.twilioNumber, Url: opts.twimlUrl, Method: 'POST',
+    StatusCallback: opts.statusCallback, StatusCallbackMethod: 'POST', Timeout: '35',
+  };
+  try {
+    return await tw<TwilioCall>('/Calls.json', full);
+  } catch (err) {
+    // Trial accounts reject some optional parameters ("limited parameter access") — fall back to the bare minimum.
+    if (/disallowed parameters|limited parameter access/i.test((err as Error).message)) {
+      console.warn('[twilio] optional call params rejected (trial) — retrying with To/From/Url only');
+      return tw<TwilioCall>('/Calls.json', { To: opts.to, From: config.twilioNumber, Url: opts.twimlUrl });
+    }
+    throw err;
+  }
 }
 
 /** Trial accounts: Twilio calls the number and asks for this validation code. */
