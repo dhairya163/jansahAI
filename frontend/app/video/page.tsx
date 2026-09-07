@@ -21,9 +21,9 @@ export default function VideoPage() {
             preload="metadata"
             style={{ width: '100%', display: 'block', borderRadius: 'var(--r-2)', background: '#000' }}
           >
-            <source src="/jansah-demo.mp4" type="video/mp4" />
+            <source src="/Jansahai-final.mp4" type="video/mp4" />
             Your browser does not support embedded video —{' '}
-            <a href="/jansah-demo.mp4" style={{ color: '#fff' }}>download it instead</a>.
+            <a href="/Jansahai-final.mp4" style={{ color: '#fff' }}>download it instead</a>.
           </video>
         </div>
 
